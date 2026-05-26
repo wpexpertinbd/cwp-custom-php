@@ -139,11 +139,25 @@ stop_and_backup_pools() {
 
 restore_pools() {
     local PHPMAJOR="$1" FPMDIR="$2"
+    # First check current run's stash, then fall back to MOST RECENT prior stash
+    # (covers the case where a previous run failed mid-build: it preserved pools
+    # under its own stamp, deleted /opt/alt/php-fpmNN, and this is the retry run.)
     local stash="/root/cwp-php-backups/${BH_RUN_STAMP}/php-fpm${PHPMAJOR}-users"
+    if [ ! -d "$stash" ] || ! compgen -G "${stash}/*.conf" > /dev/null; then
+        local prior
+        prior=$(ls -1dt /root/cwp-php-backups/*/php-fpm${PHPMAJOR}-users 2>/dev/null \
+                | while read -r d; do
+                      compgen -G "${d}/*.conf" >/dev/null && echo "$d" && break
+                  done | head -1)
+        if [ -n "$prior" ] && [ -d "$prior" ]; then
+            stash="$prior"
+            log "Using prior run's pool stash: $stash"
+        fi
+    fi
     if [ -d "$stash" ] && compgen -G "${stash}/*.conf" > /dev/null; then
         mkdir -p "${FPMDIR}/usr/etc/php-fpm.d/users"
         cp -a "${stash}/." "${FPMDIR}/usr/etc/php-fpm.d/users/"
-        ok "Restored $(ls "$stash" | wc -l) user pool configs"
+        ok "Restored $(ls "$stash"/*.conf 2>/dev/null | wc -l) user pool configs from $stash"
     fi
 }
 

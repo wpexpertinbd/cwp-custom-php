@@ -89,8 +89,21 @@ fix_curl_ld_trap() {
     if command -v ldd >/dev/null 2>&1 && [ -f /usr/lib64/librepo.so.0 ]; then
         if ldd /usr/lib64/librepo.so.0 2>/dev/null | grep -q "/usr/local/lib/libcurl"; then
             warn "librepo STILL linked to /usr/local/lib/libcurl after cleanup."
-            warn "Last resort: rename /usr/local/lib/libcurl.so* aside, then run ldconfig."
-            warn "Inspect with:  ls -la /usr/local/lib/libcurl*  &&  ldconfig -p | grep libcurl"
+            warn ""
+            warn "Cause: an old manual curl install dropped libcurl.so* directly into /usr/local/lib."
+            warn "/usr/local/lib is in ld's default search path on EL8, so librepo finds it first."
+            warn ""
+            warn "This is cosmetic — PHP builds work fine using our isolated /opt/curl-8.7.1."
+            warn "But to fully fix it, rename the rogue files aside (NOT auto-applied — they may be"
+            warn "in use by other software you installed):"
+            warn ""
+            warn "  ls -la /usr/local/lib/libcurl*"
+            warn "  ldconfig -p | grep libcurl"
+            warn "  # if safe, then:"
+            warn "  mkdir -p /root/cwp-php-backups/manual-libcurl"
+            warn "  mv /usr/local/lib/libcurl* /root/cwp-php-backups/manual-libcurl/"
+            warn "  ldconfig"
+            warn "  ldd /usr/lib64/librepo.so.0 | grep libcurl   # should now point at /usr/lib64"
         else
             ok "librepo correctly uses system libcurl"
         fi

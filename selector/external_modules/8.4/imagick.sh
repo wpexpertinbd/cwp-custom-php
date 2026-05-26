@@ -1,47 +1,75 @@
 #!/bin/bash
+set -euo pipefail
 
-# Detect PHP FPM version
-PHPFPM="/opt/alt/php-fpm84"
-if [ ! -e "${PHPFPM}/usr/bin/php-config" ]; then
-    PHPFPM="/opt/alt/php-fpm85"
+echo ""
+echo "=== imagick.sh (git source — works for PHP 8.3 / 8.4 / 8.5) ==="
+
+# ---------------------------------------------------------
+# REAL script path even when CWP copies to a temp location
+# ---------------------------------------------------------
+SCRIPT_REAL_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+
+if   [[ "$SCRIPT_REAL_PATH" == *"/8.3/"* ]]; then PHPFPM="/opt/alt/php-fpm83"
+elif [[ "$SCRIPT_REAL_PATH" == *"/8.4/"* ]]; then PHPFPM="/opt/alt/php-fpm84"
+elif [[ "$SCRIPT_REAL_PATH" == *"/8.5/"* ]]; then PHPFPM="/opt/alt/php-fpm85"
+else
+    echo "ERROR: imagick.sh not inside 8.3 / 8.4 / 8.5 external_modules folder."
+    echo "Real path: $SCRIPT_REAL_PATH"
+    exit 1
 fi
 
-PHPBIN="${PHPFPM}/usr/bin/php"
 PHPCONFIG="${PHPFPM}/usr/bin/php-config"
+PHPIZE="${PHPFPM}/usr/bin/phpize"
 PHPINIDIR="${PHPFPM}/usr/php/php.d"
 
-if [ ! -x "${PHPCONFIG}" ]; then
-    echo "Skipping Imagick: php-config not found (${PHPCONFIG})"
+if [ ! -x "$PHPCONFIG" ]; then
+    echo "Skipping Imagick: php-config not found ($PHPCONFIG)"
     exit 0
 fi
 
+PHPEXTDIR="$(${PHPCONFIG} --extension-dir)"
+
+echo "Detected PHP: $PHPFPM"
+echo "Extension dir: $PHPEXTDIR"
+
+# ---------------------------------------------------------
+# Install ImageMagick dev headers (PECL build target)
+# ---------------------------------------------------------
 echo "Installing prerequisites..."
-dnf -y install ImageMagick ImageMagick-devel ImageMagick-perl pkgconfig
+dnf -y install ImageMagick ImageMagick-devel ImageMagick-perl pkgconfig gcc make autoconf || true
 
+# ---------------------------------------------------------
+# Build from git (PECL pin 3.7.2 is 404 — git always works)
+# ---------------------------------------------------------
 cd /usr/local/src
-rm -rf imagick-*
+rm -rf imagick imagick-build imagick-*.tgz 2>/dev/null || true
 
-echo "Downloading imagick-3.7.2..."
-wget https://pecl.php.net/get/imagick-3.7.2.tgz -O imagick.tgz
-
-tar -xf imagick.tgz
-cd imagick-3.7.2
+echo "Cloning Imagick/imagick from GitHub..."
+git clone --depth 1 https://github.com/Imagick/imagick.git imagick-build
+cd imagick-build
 
 echo "phpize..."
-${PHPFPM}/usr/bin/phpize
+${PHPIZE}
 
 echo "Configuring..."
-./configure --with-php-config=${PHPCONFIG}
+./configure --with-php-config="${PHPCONFIG}"
 
 echo "Compiling..."
-make -j"$(nproc)" && make install
+make -j"$(nproc)"
+make install
 
-EXTDIR="$(${PHPCONFIG} --extension-dir)"
-
-if [ -e "${EXTDIR}/imagick.so" ]; then
-    echo "Creating imagick.ini"
-    echo "extension=imagick.so" > "${PHPINIDIR}/imagick.ini"
-    echo "Imagick installation OK."
-else
-    echo "ERROR: imagick.so missing: ${EXTDIR}/imagick.so"
+# ---------------------------------------------------------
+# Enable
+# ---------------------------------------------------------
+if [ ! -f "${PHPEXTDIR}/imagick.so" ]; then
+    echo "ERROR: imagick.so was NOT built (${PHPEXTDIR}/imagick.so)"
+    exit 1
 fi
+
+echo "extension=imagick.so" > "${PHPINIDIR}/imagick.ini"
+
+echo ""
+echo "=========================================="
+echo " Imagick installed successfully for $PHPFPM"
+echo "=========================================="
+exit 0

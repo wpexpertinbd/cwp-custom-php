@@ -59,7 +59,12 @@ build_php() {
     # ---- CWP pre-conf (pcre2, etc.) ----
     if [ -e "${CONFBASE}/php${PHPMAJOR}_pre.conf" ]; then
         log "Running php${PHPMAJOR}_pre.conf"
-        bash "${CONFBASE}/php${PHPMAJOR}_pre.conf"
+        # pre.conf runs scripts like libavif, pcre2, imap7, firebird, ldap —
+        # all best-effort auxiliary libraries. A non-zero from any of these
+        # should warn but not abort the build (e.g. ldap.sh's `ln -s` on a
+        # symlink that already exists).
+        bash "${CONFBASE}/php${PHPMAJOR}_pre.conf" \
+            || warn "php${PHPMAJOR}_pre.conf returned non-zero (non-fatal, continuing)"
     fi
 
     # ---- Resolve + download PHP source ----

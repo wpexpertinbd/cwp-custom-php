@@ -1,0 +1,18 @@
+# Force LF endings for everything that gets executed on Linux.
+# Without this, Windows git auto-CRLF would store \r\n in .sh files and
+# bash on the target server would fail with "\r: command not found".
+
+*           text=auto eol=lf
+*.sh        text eol=lf
+*.ini       text eol=lf
+*.conf      text eol=lf
+*.txt       text eol=lf
+*.md        text eol=lf
+.gitignore  text eol=lf
+.gitattributes text eol=lf
+
+# Don't touch binaries (none in this repo today, but future-proof)
+*.tar.gz    binary
+*.so        binary
+*.png       binary
+*.jpg       binary

@@ -1,0 +1,20 @@
+# macOS / Windows trash
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*~
+
+# Local logs and build leftovers
+*.log
+php-build/
+build-dir/
+php-test-*.tar.gz
+
+# Local backups (per-server, never commit)
+cwp-php-backups/
+ioncube_loaders*.tar.gz

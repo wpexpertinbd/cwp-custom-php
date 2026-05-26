@@ -56,19 +56,43 @@ preflight() {
 }
 
 fix_curl_ld_trap() {
-    local f=/etc/ld.so.conf.d/curl-local.conf
-    if [ -e "$f" ]; then
-        warn "Found $f — this file points dnf/yum at custom libcurl and breaks repos."
-        backup_file "$f"
-        mv "$f" "${f}.disabled.${BH_RUN_STAMP}"
-        ldconfig
-        ok "Disabled $f (renamed to ${f}.disabled.${BH_RUN_STAMP})"
+    # Scan EVERY file in /etc/ld.so.conf.d/ for /usr/local references —
+    # the trap isn't always called curl-local.conf.
+    local trapped=0
+    local f
+    if [ -d /etc/ld.so.conf.d ]; then
+        for f in /etc/ld.so.conf.d/*.conf; do
+            [ -e "$f" ] || continue
+            # Match any uncommented line containing /usr/local
+            if grep -qE '^[[:space:]]*[^#].*\/usr\/local' "$f" 2>/dev/null; then
+                warn "Found $f pointing at /usr/local — shadows system libcurl, breaks dnf."
+                backup_file "$f"
+                mv "$f" "${f}.disabled.${BH_RUN_STAMP}"
+                ok "Disabled $f (renamed to ${f}.disabled.${BH_RUN_STAMP})"
+                trapped=$((trapped + 1))
+            fi
+        done
     fi
+    # Also check master /etc/ld.so.conf itself
+    if [ -f /etc/ld.so.conf ] && grep -qE '^[[:space:]]*[^#].*\/usr\/local' /etc/ld.so.conf 2>/dev/null; then
+        warn "/etc/ld.so.conf contains a /usr/local entry — commenting it out."
+        backup_file /etc/ld.so.conf
+        sed -ri 's|^([[:space:]]*[^#].*\/usr\/local.*)$|# disabled-by-cwp-custom-php: \1|' /etc/ld.so.conf
+        trapped=$((trapped + 1))
+    fi
+    if [ "$trapped" -gt 0 ]; then
+        ldconfig
+        ok "Disabled $trapped ld.so trap entry/entries and ran ldconfig"
+    fi
+
     # Verify librepo is using system libcurl
     if command -v ldd >/dev/null 2>&1 && [ -f /usr/lib64/librepo.so.0 ]; then
         if ldd /usr/lib64/librepo.so.0 2>/dev/null | grep -q "/usr/local/lib/libcurl"; then
-            warn "librepo still linked to /usr/local/lib/libcurl — dnf may fail."
-            warn "Investigate any other file under /etc/ld.so.conf.d/ pointing at /usr/local."
+            warn "librepo STILL linked to /usr/local/lib/libcurl after cleanup."
+            warn "Last resort: rename /usr/local/lib/libcurl.so* aside, then run ldconfig."
+            warn "Inspect with:  ls -la /usr/local/lib/libcurl*  &&  ldconfig -p | grep libcurl"
+        else
+            ok "librepo correctly uses system libcurl"
         fi
     fi
 }

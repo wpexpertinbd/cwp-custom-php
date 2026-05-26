@@ -189,14 +189,23 @@ setup_isolated_curl() {
             echo "FAIL_WGET"; exit 2
         fi
         tar -xzf "curl-${CURL_VER}.tar.gz" && cd "curl-${CURL_VER}" || exit 2
-        ./configure --prefix="${CURL_PREFIX}" --with-openssl --with-nghttp2 --with-zlib \
-            --disable-shared=no >/dev/null
+        # Note: don't pass --disable-shared=no (bogus). Just request what we need.
+        # --without-libpsl: EL8 may lack libpsl-devel; curl doesn't strictly need it.
+        ./configure --prefix="${CURL_PREFIX}" \
+            --with-openssl \
+            --with-nghttp2 \
+            --with-zlib \
+            --without-libpsl \
+            --enable-shared \
+            --enable-static
+        if [ $? -ne 0 ]; then echo "FAIL_CONFIGURE"; exit 2; fi
         if command -v nproc >/dev/null 2>&1; then
-            make -j"$(nproc)" >/dev/null
+            make -j"$(nproc)"
         else
-            make >/dev/null
+            make
         fi
-        make install >/dev/null
+        if [ $? -ne 0 ]; then echo "FAIL_MAKE"; exit 2; fi
+        make install
     )
     local rc=$?
     set -e

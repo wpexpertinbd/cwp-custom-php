@@ -127,6 +127,15 @@ build_php() {
     # ====================================================================
     atomic_swap "$PHPMAJOR" "$FPMDIR" "$STAGE_FPMDIR"
 
+    # ---- Bootstrap CWP's X.Y_last_build.ini ----
+    # CWP UI's PHP-FPM Selector reads this to remember "what was last built".
+    # On fresh servers admin hasn't clicked Build yet, so the file is missing
+    # → UI shows "no previous build" state. Auto-generate it now so the UI
+    # behaves correctly for our deployed versions. Re-uses our shipped
+    # selector/X.Y.elN.ini, quotes values, appends [version] block.
+    local _dot_major; _dot_major="${PHPMAJOR:0:1}.${PHPMAJOR:1}"
+    deploy_last_build_ini "$_dot_major" "$PHPVER"
+
     # ---- External modules (imagick, redis, etc.) — now against the NEW LIVE install ----
     # During this window (~3-5 min), sites using these extensions get errors.
     # Core PHP is alive, but imagick/redis/memcache/ioncube haven't loaded yet.

@@ -1,52 +1,23 @@
 #!/bin/bash
-set -euo pipefail
-
-echo ""
-echo "===== Building uploadprogress extension ====="
-
-# --- Detect PHP version (84 / 85) ---
-if [ -x /opt/alt/php-fpm82/usr/bin/php-config ]; then
-    PHPMAJOR="84"
-    PHPFPM="/opt/alt/php-fpm82"
-elif [ -x /opt/alt/php-fpm85/usr/bin/php-config ]; then
-    PHPMAJOR="85"
-    PHPFPM="/opt/alt/php-fpm85"
-else
-    echo "ERROR: No PHP 8.2 or 8.5 installation found. Exiting."
-    exit 0
-fi
-
-PHPBIN="${PHPFPM}/usr/bin/php"
-PHPCONFIG="${PHPFPM}/usr/bin/php-config"
-PHPEXTDIR="$(${PHPCONFIG} --extension-dir)"
-
-echo "Detected PHP-FPM ${PHPMAJOR} at: ${PHPFPM}"
-echo "Extension dir: ${PHPEXTDIR}"
-
+if [ -e "/opt/alt/php-fpm82/usr/bin/php-config" ];then
 cd /usr/local/src
-
-# --- uploadprogress PECL extension ---
-rm -rf uploadprogress* uploadprogress.tgz
-
-curl -L "https://pecl.php.net/get/uploadprogress" -o uploadprogress.tgz
+rm -rf uploadprogress
+curl https://pecl.php.net/get/uploadprogress -o uploadprogress.tgz
 tar -xf uploadprogress.tgz
-cd uploadprogress-*
-
-${PHPFPM}/usr/bin/phpize
-./configure --with-php-config="${PHPCONFIG}"
-make -j"$(nproc)"
+cd uploadprogress-*/
+/opt/alt/php-fpm82/usr/bin/phpize
+./configure --with-php-config=/opt/alt/php-fpm82/usr/bin/php-config
+make
 make install
 
-# --- creating ini ---
-INI_FILE="${PHPFPM}/usr/php/php.d/uploadprogress.ini"
+PHPEXTDIR=`/opt/alt/php-fpm82/usr/bin/php-config --extension-dir`
 
-if [ -f "${PHPEXTDIR}/uploadprogress.so" ]; then
-    echo "extension=uploadprogress.so" > "${INI_FILE}"
-    echo "uploadprogress.so successfully installed."
+if [ -e "$PHPEXTDIR/uploadprogress.so" ];then 
+	echo "Creating config file"
+	grep "uploadprogress.so" /opt/alt/php-fpm82/usr/php/php.d/uploadprogress.ini 2> /dev/null 1> /dev/null|| echo "extension=uploadprogress.so" > /opt/alt/php-fpm82/usr/php/php.d/uploadprogress.ini
 else
-    echo "ERROR: uploadprogress.so missing — build failed."
-    exit 1
+	echo "ERROR: Missing extension file $PHPEXTDIR/uploadprogress.so"
 fi
-
-echo "Uploadprogress extension installed successfully for PHP ${PHPMAJOR}"
-echo "=============================================="
+else
+echo "Skipping as php build failed"
+fi

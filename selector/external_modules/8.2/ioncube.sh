@@ -1,50 +1,17 @@
 #!/bin/bash
-# IonCube Loader installer for CWP alt-PHP
-# Works for PHP 8.2, 8.3, 8.4, 8.5
-set -euo pipefail
 
-# Detect PHP major
-PHPMAJOR="${PHPMAJOR:-82}"    # it is 83 or 84 or 85
-PHPVERSION="8.2"
-FPMDIR="/opt/alt/php-fpm${PHPMAJOR}"
-PHPBIN="${FPMDIR}/usr/bin/php"
+IONCUBEVER="8.2"
+IONCUBESHORT="82"
 
-echo "Detected PHP: ${PHPBIN}"
+rm -rf /opt/alt/php-fpm$IONCUBESHORT/usr/php/php.d/ioncube.ini
+touch /opt/alt/php-fpm$IONCUBESHORT/usr/php/php.d/ioncube.ini
 
-# Determine loader version
-if [ "$PHPMAJOR" = "85" ]; then
-    LOADER="ioncube_loader_lin_${PHPVERSION}.so"
-    URL="https://downloads.ioncube.com/loader_downloads/ioncube_loaders_lin_x86-64_beta.tar.gz"
+if [ -e "/usr/local/ioncube/ioncube_loader_lin_$IONCUBEVER.so" ];then
+        grep "ioncube_loader_lin_$IONCUBEVER.so" /opt/alt/php-fpm$IONCUBESHORT/usr/php/php.d/ioncube.ini 2> /dev/null 1> /dev/null|| echo "zend_extension=/usr/local/ioncube/ioncube_loader_lin_$IONCUBEVER.so" > /opt/alt/php-fpm$IONCUBESHORT/usr/php/php.d/ioncube.ini
 else
-    LOADER="ioncube_loader_lin_${PHPVERSION}.so"
-    URL="https://downloads.ioncube.com/loader_downloads/ioncube_loaders_lin_x86-64.tar.gz"
+        sh /scripts/update_ioncube
+        if [ -e "/usr/local/ioncube/ioncube_loader_lin_$IONCUBEVER.so" ];then
+                grep "ioncube_loader_lin_$IONCUBEVER.so" /opt/alt/php-fpm$IONCUBESHORT/usr/php/php.d/ioncube.ini 2> /dev/null 1> /dev/null|| echo "zend_extension=/usr/local/ioncube/ioncube_loader_lin_$IONCUBEVER.so" > /opt/alt/php-fpm$IONCUBESHORT/usr/php/php.d/ioncube.ini
+        fi
 fi
 
-echo "Downloading IonCube Loader: $LOADER"
-echo "URL: $URL"
-
-# Clean + target directory
-rm -f ioncube.tar.gz
-cd /usr/local
-rm -rf ioncube
-mkdir -p ioncube
-
-wget -q "$URL" -O ioncube.tar.gz
-tar -xf ioncube.tar.gz -C ioncube --strip-components=1
-rm -f ioncube.tar.gz
-
-if [ ! -f "/usr/local/ioncube/${LOADER}" ]; then
-    echo "ERROR: Loader file not found: /usr/local/ioncube/${LOADER}"
-    exit 1
-fi
-
-# Create .ini file
-INI="${FPMDIR}/usr/php/php.d/ioncube.ini"
-rm -f "$INI"
-echo "zend_extension=/usr/local/ioncube/${LOADER}" > "$INI"
-
-chmod 644 "$INI"
-
-echo "IonCube Loader installed for PHP ${PHPMAJOR}."
-echo "Loader path: /usr/local/ioncube/${LOADER}"
-echo "INI: ${INI}"

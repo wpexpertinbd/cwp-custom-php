@@ -1,3 +1,3 @@
 #/bin/bash
 
-dnf install uw-imap-devel -y
+yum install uw-imap-static uw-imap-devel -y

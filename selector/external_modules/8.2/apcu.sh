@@ -1,39 +1,23 @@
 #!/bin/bash
-
-# Automated PHP FPM prefix recognition
-PHPFPM="/opt/alt/php-fpm82"
-if [ ! -e "${PHPFPM}/usr/bin/php-config" ]; then
-    # If not 8.2, then 8.5
-    PHPFPM="/opt/alt/php-fpm85"
-fi
-
-PHPBIN="${PHPFPM}/usr/bin/php"
-PHPCONFIG="${PHPFPM}/usr/bin/php-config"
-PHPINI_DIR="${PHPFPM}/usr/php/php.d"
-
-if [ ! -x "${PHPCONFIG}" ]; then
-    echo "Skipping: PHP build missing (${PHPCONFIG})"
-    exit 0
-fi
-
+if [ -e "/opt/alt/php-fpm82/usr/bin/php-config" ];then
 cd /usr/local/src
 rm -rf apcu-*
+wget http://static.cdn-cwp.com/files/php/pecl/apcu-5.1.19.tgz
+tar -xf apcu-5.1.19.tgz
+cd apcu-5.1.19
+/opt/alt/php-fpm82/usr/bin/phpize
+./configure --with-php-config=/opt/alt/php-fpm82/usr/bin/php-config
+make && make install
+echo ""
 
-echo "Downloading APCu 5.1.27..."
-wget https://pecl.php.net/get/apcu-5.1.27.tgz -O apcu.tgz
+PHPEXTDIR=`/opt/alt/php-fpm82/usr/bin/php-config --extension-dir`
 
-tar -xf apcu.tgz
-cd apcu-5.1.27
-
-${PHPFPM}/usr/bin/phpize
-./configure --with-php-config=${PHPCONFIG}
-make -j"$(nproc)" && make install
-
-PHPEXTDIR="$(${PHPCONFIG} --extension-dir)"
-
-if [ -e "${PHPEXTDIR}/apcu.so" ]; then
-    echo "Creating apcu.ini"
-    echo "extension=apcu.so" > "${PHPINI_DIR}/apcu.ini"
+if [ -e "$PHPEXTDIR/apcu.so" ];then 
+	echo "Creating config file"
+	grep "apcu.so" /opt/alt/php-fpm82/usr/php/php.d/apcu.ini 2> /dev/null 1> /dev/null|| echo "extension=apcu.so" > /opt/alt/php-fpm82/usr/php/php.d/apcu.ini
 else
-    echo "ERROR: Missing APCu extension file → ${PHPEXTDIR}/apcu.so"
+	echo "ERROR: Missing extension file $PHPEXTDIR/apcu.so"
+fi
+else
+echo "Skipping as php build failed"
 fi

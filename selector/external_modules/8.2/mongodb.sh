@@ -1,62 +1,25 @@
 #!/bin/bash
-set -euo pipefail
-
-echo ""
-echo "=== mongodb.sh ==="
-
-# ---- Detect target PHP version (84 or 85) ----
-if [ -x /opt/alt/php-fpm82/usr/bin/php-config ]; then
-    PHPFPM="/opt/alt/php-fpm82"
-elif [ -x /opt/alt/php-fpm85/usr/bin/php-config ]; then
-    PHPFPM="/opt/alt/php-fpm85"
-else
-    echo "No php-fpm82 or php-fpm85 found. Skipping."
-    exit 0
-fi
-
-PHPCONFIG="${PHPFPM}/usr/bin/php-config"
-PHPIZE="${PHPFPM}/usr/bin/phpize"
-PHPINIDIR="${PHPFPM}/usr/php/php.d"
-
-echo "Using PHP from: ${PHPFPM}"
-
-# ---- Required system libs ----
-dnf -y install openssl-devel || true
-
-# ---- Prepare sources ----
+if [ -e "/opt/alt/php-fpm82/usr/bin/php-config" ];then
 cd /usr/local/src
-rm -rf mongodb* || true
-
-echo "Downloading latest MongoDB driver from PECL..."
-curl -L https://pecl.php.net/get/mongodb -o mongodb.tgz
-
-tar -xzf mongodb.tgz
-cd mongodb-*/
-
-# ---- Build ----
-echo "Running phpize..."
-$PHPIZE
-
-echo "Configuring MongoDB extension..."
-./configure --with-php-config="$PHPCONFIG"
-
-echo "Compiling..."
-make -j"$(nproc)"
+yum -y install openssl-devel
+rm -rf mongodb-*
+rm -rf mongodb-*
+wget http://static.cdn-cwp.com/files/php/pecl/mongodb-1.11.1.tgz
+tar -zxvf mongodb-1.11.1.tgz
+cd mongodb-1.11.1
+/opt/alt/php-fpm82/usr/bin/phpize
+./configure --with-php-config=/opt/alt/php-fpm82/usr/bin/php-config
+make
 make install
 
-# ---- Extension dir detection ----
-PHPEXTDIR="$($PHPCONFIG --extension-dir)"
+PHPEXTDIR=`/opt/alt/php-fpm82/usr/bin/php-config --extension-dir`
 
-# ---- Check if .so exists ----
-if [ ! -e "$PHPEXTDIR/mongodb.so" ]; then
-    echo "ERROR: mongodb.so not found in $PHPEXTDIR"
-    exit 0
+if [ -e "$PHPEXTDIR/mongodb.so" ];then 
+	echo "Creating config file"
+	grep "mongodb.so" /opt/alt/php-fpm82/usr/php/php.d/mongodb.ini 2> /dev/null 1> /dev/null|| echo "extension=mongodb.so" > /opt/alt/php-fpm82/usr/php/php.d/mongodb.ini
+else
+	echo "ERROR: Missing extension file $PHPEXTDIR/mongodb.so"
 fi
-
-# ---- Create INI ----
-echo "Enabling mongodb extension..."
-rm -f "${PHPINIDIR}/mongodb.ini" 2>/dev/null || true
-echo "extension=mongodb.so" > "${PHPINIDIR}/mongodb.ini"
-
-echo "MongoDB extension installation complete."
-exit 0
+else
+echo "Skipping as php build failed"
+fi

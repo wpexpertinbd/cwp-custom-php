@@ -96,6 +96,11 @@ Options:
                         LimitRequestBody (Apache) across ALL PHP versions on
                         the box. Default: 2048 (2GB).
                         Pass --big-upload=0 to skip.
+  --clean-shadow-libs   When preflight detects shadow libs/binaries in
+                        /usr/local/lib*/ or /usr/local/bin/, auto-quarantine
+                        them to /root/cwp-php-backups/stale-libs/. Default is
+                        to warn-only (safer for unknown servers). Use this on
+                        your fleet after you've confirmed the pattern is safe.
   -h, --help            This text.
 
 Examples:
@@ -117,12 +122,14 @@ while [ $# -gt 0 ]; do
         --disable-ext=*)   BH_DISABLE_EXTENSIONS="${1#*=}"; shift ;;
         --big-upload)      BIG_UPLOAD_MB="$2"; shift 2 ;;
         --big-upload=*)    BIG_UPLOAD_MB="${1#*=}"; shift ;;
+        --clean-shadow-libs) BH_CLEAN_SHADOW_LIBS=1; shift ;;
         -h|--help)    usage; exit 0 ;;
         *) err "Unknown argument: $1"; usage; exit 2 ;;
     esac
 done
 export BH_FORCE_CONF="$FORCE_CONF"
 export BH_DISABLE_EXTENSIONS
+export BH_CLEAN_SHADOW_LIBS="${BH_CLEAN_SHADOW_LIBS:-0}"
 
 # -----------------------------------------------------------------------------
 # --fix-dnf shortcut

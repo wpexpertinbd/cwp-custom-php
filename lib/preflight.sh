@@ -101,18 +101,27 @@ check_shadow_libs() {
         # Moving the libs without also handling these binaries breaks them with
         # error 48 "Unknown option was passed in to libcurl" (or equivalent).
         check_shadow_bins
+
+        # If user passed --clean-shadow-libs (or BH_CLEAN_SHADOW_LIBS=1), auto-quarantine.
+        if [ "${BH_CLEAN_SHADOW_LIBS:-0}" -eq 1 ]; then
+            auto_quarantine_shadows
+            return 0
+        fi
+
         warn ""
         warn "Cleanup (NOT auto-applied — these files may still be used by other software you"
         warn "installed manually). To quarantine all shadows and let RPM-installed libs take over:"
         warn ""
         warn "  mkdir -p /root/cwp-php-backups/stale-libs"
-        warn "  mv /usr/local/lib64/{libzip,libcurl,libssl,libcrypto}.so* /root/cwp-php-backups/stale-libs/ 2>/dev/null"
-        warn "  mv /usr/local/lib/{libzip,libcurl,libssl,libcrypto}.so*   /root/cwp-php-backups/stale-libs/ 2>/dev/null"
+        warn "  mv /usr/local/lib64/{libzip,libcurl,libssl,libcrypto,libavif}.so* /root/cwp-php-backups/stale-libs/ 2>/dev/null"
+        warn "  mv /usr/local/lib/{libzip,libcurl,libssl,libcrypto,libavif}.so*   /root/cwp-php-backups/stale-libs/ 2>/dev/null"
         warn "  ldconfig"
         warn ""
         warn "If you ALSO see warnings about /usr/local/bin/ binaries above, quarantine them too:"
-        warn "  mv /usr/local/bin/curl /root/cwp-php-backups/stale-libs/curl-bin   # example"
+        warn "  mv /usr/local/bin/{curl,lsphp,php,php-cgi,phpdbg} /root/cwp-php-backups/stale-libs/ 2>/dev/null"
         warn "  hash -r"
+        warn ""
+        warn "Or pass --clean-shadow-libs to install.sh to apply all of the above automatically."
         warn ""
         warn "Then verify:"
         warn "  ldd /opt/alt/php-fpm84/usr/bin/php | grep -E '(libzip|libcurl|libssl)'"
@@ -226,6 +235,69 @@ fix_curl_ld_trap() {
             warn "  ldd /usr/lib64/librepo.so.0 | grep libcurl   # should now point at /usr/lib64"
         else
             ok "librepo correctly uses system libcurl"
+        fi
+    fi
+}
+
+# Auto-quarantine: move shadow libs + their dependent binaries to backup dir.
+# Triggered by --clean-shadow-libs / BH_CLEAN_SHADOW_LIBS=1 when check_shadow_libs
+# detects something. Mirrors the manual commands we print otherwise.
+auto_quarantine_shadows() {
+    section "Auto-quarantining shadow libs + binaries (--clean-shadow-libs)"
+
+    local stale_dir="/root/cwp-php-backups/stale-libs"
+    mkdir -p "$stale_dir"
+
+    local moved=0 lib bin
+
+    # Libs in /usr/local/lib64
+    for lib in libzip libcurl libssl libcrypto libavif libxml2 libpng libjpeg libwebp libonig libsodium; do
+        for f in /usr/local/lib64/${lib}.so* /usr/local/lib/${lib}.so*; do
+            [ -e "$f" ] || continue
+            mv "$f" "$stale_dir/" 2>/dev/null && moved=$((moved + 1))
+        done
+    done
+
+    if [ "$moved" -gt 0 ]; then
+        ldconfig
+        ok "Quarantined ${moved} shadow lib file(s) -> ${stale_dir}/"
+    fi
+
+    # Binaries in /usr/local/bin that we know commonly depend on shadow libs.
+    # Check each ldd; only move if it actually links to /usr/local/lib*
+    local moved_bins=0
+    for bin in /usr/local/bin/curl /usr/local/bin/lsphp /usr/local/bin/php \
+               /usr/local/bin/php-cgi /usr/local/bin/phpdbg \
+               /usr/local/bin/pcre2grep /usr/local/bin/pcre2test \
+               /usr/local/bin/zipcmp /usr/local/bin/zipmerge /usr/local/bin/ziptool
+    do
+        [ -x "$bin" ] || continue
+        # If the binary STILL resolves cleanly (system libs only), leave it alone.
+        # Only move if it references the now-quarantined /usr/local/lib path.
+        # Easier check: just move it — it was built against the lib we removed,
+        # so it's broken now. Better to quarantine than leave a broken binary.
+        # But we can be conservative: only move if ldd shows "not found".
+        if ldd "$bin" 2>/dev/null | grep -qE 'not found|/usr/local/lib'; then
+            mv "$bin" "$stale_dir/" 2>/dev/null && moved_bins=$((moved_bins + 1))
+        fi
+    done
+
+    if [ "$moved_bins" -gt 0 ]; then
+        hash -r 2>/dev/null || true
+        ok "Quarantined ${moved_bins} shadow binary/binaries -> ${stale_dir}/"
+    fi
+
+    if [ "$moved" -eq 0 ] && [ "$moved_bins" -eq 0 ]; then
+        log "Nothing to quarantine (libs/bins may have already been cleaned)"
+        return 0
+    fi
+
+    # Final verification: librepo + dnf should be clean now
+    if command -v ldd >/dev/null 2>&1 && [ -f /usr/lib64/librepo.so.0 ]; then
+        if ldd /usr/lib64/librepo.so.0 2>/dev/null | grep -q "/usr/local"; then
+            warn "librepo STILL has /usr/local in its dependency chain — investigate manually"
+        else
+            ok "librepo cleanly references /lib64/ — dnf should work"
         fi
     fi
 }

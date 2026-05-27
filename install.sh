@@ -112,10 +112,13 @@ Options:
   --fix-dnf             Run ONLY the curl-ld.so trap repair and exit. Useful
                         if previous manual curl-from-source install broke
                         dnf/yum/nginx repo.
-  --refresh-ioncube     Run ONLY the ioncube refresh and exit. Re-downloads
-                        latest loaders from ioncube.com, re-wires every
-                        /opt/alt/php-fpmNN, restarts services. Run this
-                        after CWP rebuilds (which wipe /usr/local/ioncube).
+  --refresh-ioncube     Post-CWP-rebuild recovery. Auto-installs libzip if
+                        CWP UI rebuild removed it, re-downloads latest ioncube
+                        loaders from ioncube.com, re-wires every
+                        /opt/alt/php-fpmNN, restarts ALL custom php-fpm
+                        services. Run this after ANY CWP UI rebuild
+                        (PHP Version Switcher, PHP Selector, PHP-FPM
+                        Selector, Rebuild Apache+PHP).
   --disable-ext=LIST    Comma-list of extensions to disable post-build (.ini
                         renamed to .ini.disabled, .so kept on disk).
                         Default: mongodb,sourceguardian — both emit noisy
@@ -189,11 +192,43 @@ if [ "$FIX_DNF_ONLY" -eq 1 ]; then
     exit 0
 fi
 
-# --refresh-ioncube shortcut (standalone, no build)
+# --refresh-ioncube shortcut (standalone, no build).
+# This is the canonical recovery command after ANY CWP UI rebuild
+# (PHP Version Switcher, PHP Selector, PHP-FPM Selector, Rebuild Apache + PHP).
+# CWP UI rebuilds can wipe BOTH /usr/local/ioncube/ AND the libzip RPM, so this
+# path fixes both, then restarts every /opt/alt/php-fpmNN service to pick up
+# the restored libs.
 if [ "$REFRESH_IONCUBE_ONLY" -eq 1 ]; then
     require_root
+    section "Post-CWP-rebuild recovery — libzip + ioncube + service restart"
+
+    # 1. Restore libzip if CWP UI rebuild removed it
+    check_libzip
+
+    # 2. Restore ioncube loaders + re-wire every /opt/alt/php-fpmNN
     refresh_ioncube
-    exit $?
+    rc=$?
+
+    # 3. Restart every detected /opt/alt/php-fpmNN service so the new libzip
+    #    is loaded by running workers (without restart they keep the old
+    #    file handles or fail to start if they were stopped).
+    section "Restarting all custom php-fpmNN services"
+    for fpm in /opt/alt/php-fpm*; do
+        [ -d "$fpm" ] || continue
+        major=$(basename "$fpm" | sed 's/^php-fpm//')
+        # Skip rollback/failed/bak dirs
+        case "$major" in (*.rollback.*|*.failed.*|*.bak.*|*.old.*) continue ;; esac
+        if systemctl list-unit-files 2>/dev/null | grep -q "php-fpm${major}.service"; then
+            if systemctl restart "php-fpm${major}" 2>/dev/null; then
+                ver=$("${fpm}/usr/bin/php" -v 2>/dev/null | head -1)
+                ok "  php-fpm${major} restarted  | ${ver:-?}"
+            else
+                warn "  php-fpm${major} restart failed — check journalctl -u php-fpm${major}"
+            fi
+        fi
+    done
+
+    exit "$rc"
 fi
 
 # Required arg

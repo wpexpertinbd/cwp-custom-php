@@ -101,6 +101,11 @@ Options:
                         them to /root/cwp-php-backups/stale-libs/. Default is
                         to warn-only (safer for unknown servers). Use this on
                         your fleet after you've confirmed the pattern is safe.
+  --system-php=X.Y      After build, symlink /usr/local/bin/{php,php-cgi,
+                        phpdbg,php-config,phpize} -> /opt/alt/php-fpmXY/usr/
+                        bin/. Makes "CWP system PHP" use our custom build.
+                        Replaces the manual ln -sfn ritual. Example:
+                        --system-php=8.3
   -h, --help            This text.
 
 Examples:
@@ -123,6 +128,8 @@ while [ $# -gt 0 ]; do
         --big-upload)      BIG_UPLOAD_MB="$2"; shift 2 ;;
         --big-upload=*)    BIG_UPLOAD_MB="${1#*=}"; shift ;;
         --clean-shadow-libs) BH_CLEAN_SHADOW_LIBS=1; shift ;;
+        --system-php)        BH_SYSTEM_PHP="$2"; shift 2 ;;
+        --system-php=*)      BH_SYSTEM_PHP="${1#*=}"; shift ;;
         -h|--help)    usage; exit 0 ;;
         *) err "Unknown argument: $1"; usage; exit 2 ;;
     esac
@@ -203,6 +210,9 @@ maybe_refresh_ioncube
 # Bump PHP + Nginx + Apache upload/memory limits across all PHP versions via CWP's helper.
 # Set BIG_UPLOAD_MB=0 (or --big-upload=0) to skip.
 apply_big_upload "$BIG_UPLOAD_MB"
+
+# Optional: point /usr/local/bin/php* at the built custom version.
+apply_system_php_symlinks "${BH_SYSTEM_PHP:-}"
 
 section "Summary"
 for spec in "${BUILT[@]}"; do

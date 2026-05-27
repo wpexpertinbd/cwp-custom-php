@@ -53,6 +53,39 @@ preflight() {
     dnf install -y gcc gcc-c++ make autoconf wget git file rsync dos2unix unzip >/dev/null 2>&1 \
         || warn "Some base packages may have failed to install"
     ok "toolchain present"
+
+    # libzip safety net — CWP's "Rebuild PHP" can remove the libzip RPM entirely
+    # (seen on s1 2026-05-27). Without libzip, every PHP binary segfaults at
+    # startup with "error while loading shared libraries: libzip.so.5".
+    check_libzip
+}
+
+# Detect a broken libzip state and auto-reinstall. Triggers when:
+#  - libzip RPM not installed (rpm -q libzip empty)
+#  - OR /usr/lib64/libzip.so.5 missing on disk
+check_libzip() {
+    local need_install=0
+    if ! rpm -q libzip >/dev/null 2>&1; then
+        warn "libzip RPM is NOT installed — CWP rebuild may have removed it."
+        need_install=1
+    elif [ ! -e /usr/lib64/libzip.so.5 ] && [ ! -e /lib64/libzip.so.5 ]; then
+        warn "libzip.so.5 missing from /usr/lib64 and /lib64 despite RPM being installed."
+        need_install=1
+    fi
+    if [ "$need_install" -eq 1 ]; then
+        log "Reinstalling libzip + libzip-devel"
+        dnf install -y libzip libzip-devel >/dev/null 2>&1 \
+            || dnf reinstall -y libzip libzip-devel >/dev/null 2>&1 \
+            || warn "libzip (re)install failed — PHP build WILL break"
+        ldconfig
+        if rpm -q libzip >/dev/null 2>&1 && [ -e /usr/lib64/libzip.so.5 ]; then
+            ok "libzip restored: $(rpm -q libzip)"
+        else
+            err "libzip still missing after reinstall attempt — investigate manually"
+        fi
+    else
+        ok "libzip OK: $(rpm -q libzip)"
+    fi
 }
 
 # Scan /usr/local/lib*/ for libs that shadow system /usr/lib64 versions.

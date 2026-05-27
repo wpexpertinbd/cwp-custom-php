@@ -153,6 +153,7 @@ systemctl status php-fpm84
 | `--disable-ext=LIST`  | Comma-list of extensions to disable post-build (`.ini` renamed to `.ini.disabled`, `.so` kept). Default: `mongodb,sourceguardian` — both emit noisy deprecation/version warnings every CLI invocation. Pass `--disable-ext=` (empty) to keep everything enabled. |
 | `--big-upload=SIZE_MB`| After build, runs CWP's `/scripts/php_big_file_upload SIZE_MB all` — bumps `upload_max_filesize`, `post_max_size`, `memory_limit` (PHP) + `client_max_body_size` (Nginx) + `LimitRequestBody` (Apache) across **all** PHP versions on the box. Default: `2048` (2 GB) — high but matches BiswasHost filemanager use. Pass `--big-upload=0` to skip. |
 | `--clean-shadow-libs` | When preflight detects shadow libs/binaries in `/usr/local/lib*/` or `/usr/local/bin/`, auto-quarantine them to `/root/cwp-php-backups/stale-libs/`. Default is **warn-only**. Use this on your fleet after you've confirmed the pattern is safe (saves a manual cleanup step per server). |
+| `--system-php=X.Y`    | After build, symlink `/usr/local/bin/{php,php-cgi,phpdbg,php-config,phpize}` → `/opt/alt/php-fpmXY/usr/bin/`. Makes "CWP system PHP" route through our custom build. Replaces the manual `ln -sfn` ritual. Example: `--system-php=8.3`. |
 | `-h`, `--help`        | Help. |
 
 ## Environment overrides

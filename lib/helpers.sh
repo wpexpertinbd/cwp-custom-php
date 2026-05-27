@@ -38,10 +38,10 @@ version_lt() {
 # php_short 8.4  -> 84;   php_short 8.3 -> 83
 php_short() { echo "${1//./}"; }
 
-# Validate "8.3", "8.4", "8.5" only
+# Validate "8.2", "8.3", "8.4", "8.5" only
 valid_major() {
     case "$1" in
-        8.3|8.4|8.5) return 0 ;;
+        8.2|8.3|8.4|8.5) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -77,6 +77,7 @@ resolve_php_version() {
         fi
         # Fallback hard-coded defaults (kept current as of repo last update)
         case "$major" in
+            8.2) echo "8.2.31" ;;
             8.3) echo "8.3.31" ;;
             8.4) echo "8.4.21" ;;
             8.5) echo "8.5.6"  ;;
@@ -89,6 +90,45 @@ resolve_php_version() {
 # Require root
 require_root() {
     [ "$(id -u)" -eq 0 ] || die "This script must run as root."
+}
+
+# Point /usr/local/bin/php, php-cgi, phpdbg, php-config, phpize at one of our
+# /opt/alt/php-fpmNN/usr/bin/ binaries via symlinks. This is the canonical way
+# to bridge "CWP system PHP" (which uses /usr/local/bin/php-cgi) to our custom
+# builds — replaces the manual ln -sfn ritual.
+# Argument is a PHP major like 8.3 (or empty/0 to skip).
+apply_system_php_symlinks() {
+    local major="$1"
+    if [ -z "$major" ] || [ "$major" = "0" ]; then
+        return 0
+    fi
+    if ! valid_major "$major"; then
+        warn "system-php: invalid major '${major}' — skipping"
+        return 0
+    fi
+    local short; short="$(php_short "$major")"
+    local src_dir="/opt/alt/php-fpm${short}/usr/bin"
+    if [ ! -x "${src_dir}/php" ]; then
+        warn "system-php: ${src_dir}/php not present — skipping (build that version first)"
+        return 0
+    fi
+    section "Pointing /usr/local/bin/ system PHP -> /opt/alt/php-fpm${short}/usr/bin/"
+    local linked=0 missing=0 b
+    for b in php php-cgi phpdbg php-config phpize; do
+        if [ -x "${src_dir}/${b}" ]; then
+            ln -sfn "${src_dir}/${b}" "/usr/local/bin/${b}"
+            ok "  /usr/local/bin/${b} -> ${src_dir}/${b}"
+            linked=$((linked + 1))
+        else
+            log "  skip ${b} (not in ${src_dir})"
+            missing=$((missing + 1))
+        fi
+    done
+    hash -r 2>/dev/null || true
+    ok "Linked ${linked} system PHP binaries to /opt/alt/php-fpm${short}/usr/bin/"
+    log "Reloading httpd so it picks up the new system php-cgi"
+    systemctl reload httpd 2>/dev/null \
+        || warn "httpd reload returned non-zero (sites may need manual restart)"
 }
 
 # Bump PHP + Nginx + Apache upload/memory limits via CWP's bundled helper.

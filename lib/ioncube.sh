@@ -58,6 +58,12 @@ refresh_ioncube() {
 
     # ---- Backup ----
     if [ -d "$IONCUBE_DIR" ]; then
+        # If someone protected /usr/local/ioncube with `chattr +i` to stop CWP
+        # rebuilds from clobbering it, our mv/rm/tar would all fail silently.
+        # Remove the immutable bit recursively before touching anything. We
+        # don't re-apply +i afterwards — the auto-heal path replaces this on
+        # every CWP rebuild anyway, so the chattr protection is redundant.
+        defuse_chattr_immutable "$IONCUBE_DIR"
         backup_file "$IONCUBE_DIR"
     fi
 
@@ -169,5 +175,33 @@ maybe_refresh_ioncube() {
         refresh_ioncube
     else
         ok "ioncube: loaders are fresh and complete — no refresh needed"
+    fi
+}
+
+# Detect and clear the chattr +i (immutable) bit recursively under a path.
+# Some BiswasHost ops add `chattr +i /usr/local/ioncube` to stop CWP rebuilds
+# from clobbering the loaders. Our refresh path then fails silently against
+# the immutable files (rm/tar return non-zero but messages get swallowed).
+# Always defuse before we touch anything; don't re-apply, since auto-heal
+# now provides the same protection at the installer level.
+defuse_chattr_immutable() {
+    local path="$1"
+    [ -e "$path" ] || return 0
+    command -v lsattr >/dev/null 2>&1 || return 0
+    command -v chattr >/dev/null 2>&1 || return 0
+
+    # Check if anything under $path has the immutable bit set
+    if lsattr -R -d "$path" 2>/dev/null | awk '{print $1}' | grep -q 'i'; then
+        warn "Found chattr +i (immutable) on $path or files inside — removing so we can refresh."
+        warn "(This protection is no longer needed — our --refresh-ioncube heals after every CWP rebuild)"
+        # -R = recurse; -f = quiet on missing/symlink-skip
+        chattr -R -f -i "$path" 2>/dev/null || true
+
+        # Verify
+        if lsattr -R -d "$path" 2>/dev/null | awk '{print $1}' | grep -q 'i'; then
+            warn "chattr -R -i did not fully clear immutable bits. May need manual: chattr -R -i $path"
+        else
+            ok "chattr +i removed from $path (recursive)"
+        fi
     fi
 }

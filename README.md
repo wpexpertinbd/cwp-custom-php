@@ -85,16 +85,58 @@ curl -fsSL https://raw.githubusercontent.com/wpexpertinbd/cwp-custom-php/main/in
 
 ## Pick the command that matches your situation
 
-### Just rebuilt PHP from CWP GUI → ioncube broke?
-
-CWP's own PHP rebuild (and `sh /scripts/update_cwp`) overwrites `/usr/local/ioncube/` with the stale bundled tarball. Loaders for 8.4/8.5 disappear. Fix:
+### After ANY CWP UI rebuild — `--refresh-ioncube` (canonical recovery command)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/wpexpertinbd/cwp-custom-php/main/install.sh \
   | bash -s -- --refresh-ioncube
 ```
 
-This downloads fresh loaders from ioncube.com, fixes perms, re-wires every `/opt/alt/php-fpmNN`, restarts services, runs `/scripts/update_cwp` if present. Safe to run anytime.
+**When to run it:**
+- After clicking **Rebuild Apache + PHP** in CWP Admin
+- After **PHP Version Switcher → Build** in CWP Admin
+- After **PHP Selector → install/rebuild** any per-user PHP-CGI version
+- After **PHP-FPM Selector → install/rebuild** any CWP-managed (5.x–8.1) version
+- After CWP's auto-update runs (often at midnight)
+- Any time `/scripts/update_cwp` runs (manually or via cron)
+- Any time `php -v` on a custom version says `libzip.so.5: cannot open shared object file` or `ionCube loader: No such file or directory`
+
+**What it does (in this exact order):**
+
+1. **`check_libzip`** — Detects whether the `libzip` RPM is installed and `/usr/lib64/libzip.so.5` exists. CWP UI rebuilds frequently REMOVE the libzip RPM entirely (real incidents on s1 + s4 — happened twice). When this happens, every PHP binary segfaults with `libzip.so.5: cannot open shared object file`. This step auto-reinstalls `libzip` + `libzip-devel` via `dnf` and runs `ldconfig`.
+
+2. **`refresh_ioncube`** — Downloads the latest ionCube loader tarball from `ioncube.com` (29 MB, ~5 sec), extracts to `/usr/local/ioncube/`, fixes permissions (root:root, 755 dirs / 644 files), then for every detected `/opt/alt/php-fpmNN`:
+   - Writes `php.d/ioncube.ini` pointing at the matching `ioncube_loader_lin_<X.Y>.so`
+   - Verifies the loader actually loads via `php -v` (looks for "ionCube" in output)
+   - Restarts `php-fpm<NN>` service so live workers pick up the new loader
+   - Skips PHP 8.0 (ionCube never released a loader for 8.0 — by design, not a bug)
+   - Skips `.rollback.*` / `.failed.*` backup dirs from atomic-swap builds
+   - Auto-removes `chattr +i` immutable bit on `/usr/local/ioncube/` if present
+
+3. **`ensure_versions_ini`** — Detects which `/opt/alt/php-fpm{82,83,84,85}` dirs exist with working binaries. Reads `/usr/local/cwpsrv/htdocs/resources/conf/el${MAJOR}/php-fpm_selector/versions.ini`. For each installed major:
+   - If `[X.Y]` section MISSING (CWP wiped it during their update) → appends our whole section block (all point releases, latest first)
+   - If section EXISTS but our LATEST point release isn't listed → inserts the `version[]=X.Y.Z` line right after the `[X.Y]` header (shows first in CWP UI dropdown)
+   - If section exists and latest is listed → no-op
+   - Sections for versions we DON'T manage (5.x, 7.x, 8.0, 8.1) are **never touched** — CWP's updates to those flow through cleanly
+   - Always backs up the live file to `/root/cwp-php-backups/<stamp>/` first
+
+4. **Service restart loop** — Iterates every `/opt/alt/php-fpm*` (skipping `.rollback/.failed/.bak/.old` dirs), runs `systemctl restart php-fpm<NN>` for each one that has a systemd unit. Prints the version banner per service for confirmation.
+
+**What it does NOT do:**
+- Does NOT rebuild PHP from source
+- Does NOT change PHP versions
+- Does NOT touch `/usr/local/lib*/` shadow libs
+- Does NOT touch `/usr/local/bin/php*` system symlinks
+- Does NOT run `/scripts/update_cwp` (used to — that was self-defeating since CWP's script wipes ionCube; removed in commit `333f8ab`)
+
+**Runtime:** ~30-90 seconds total. Atomic — services briefly cycle but no rebuilding.
+
+**Safe to run:**
+- Anytime, idempotent
+- Pre-flight to confirm a server is healthy after CWP-side operations
+- As part of a cron / monitoring script if you want it automated
+
+**Auto-log:** `/root/cwp-custom-php-<host>-<stamp>.log`. Share this file if anything fails.
 
 ### Manual curl install broke `dnf` / `yum` / nginx repo?
 

@@ -114,7 +114,7 @@ refresh_ioncube() {
         dotver="${major:0:1}.${major:1}"
         loader="${IONCUBE_DIR}/ioncube_loader_lin_${dotver}.so"
         inidir="${fpm}/usr/php/php.d"
-        inifile="${inidir}/00-ioncube.ini"   # 00- prefix so it loads before any Zend ext
+        inifile="${inidir}/ioncube.ini"      # plain name — matches the BiswasHost convention
         php="${fpm}/usr/bin/php"
 
         if [ ! -f "$loader" ]; then
@@ -123,8 +123,8 @@ refresh_ioncube() {
         fi
         [ -d "$inidir" ] || mkdir -p "$inidir"
 
-        # Remove any older ioncube.ini variants that may compete
-        rm -f "${inidir}/ioncube.ini" "${inidir}/01-ioncube.ini" 2>/dev/null
+        # Clean up older prefixed variants we may have left behind in earlier runs
+        rm -f "${inidir}/00-ioncube.ini" "${inidir}/01-ioncube.ini" 2>/dev/null
 
         echo "zend_extension=${loader}" > "$inifile"
         ok "  PHP ${dotver}: wired ${inifile} -> ${loader}"

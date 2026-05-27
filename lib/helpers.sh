@@ -91,6 +91,32 @@ require_root() {
     [ "$(id -u)" -eq 0 ] || die "This script must run as root."
 }
 
+# Bump PHP + Nginx + Apache upload/memory limits via CWP's bundled helper.
+# Single entry point — the CWP script edits every PHP version's php.ini, plus
+# nginx client_max_body_size and Apache LimitRequestBody. Pass 0 to skip.
+apply_big_upload() {
+    local size_mb="${1:-2048}"
+    if [ -z "$size_mb" ] || [ "$size_mb" = "0" ]; then
+        log "big-upload: skipped (size=0)"
+        return 0
+    fi
+    if ! [[ "$size_mb" =~ ^[0-9]+$ ]]; then
+        warn "big-upload: invalid size '${size_mb}' (not a number) — skipping"
+        return 0
+    fi
+    if [ ! -x /scripts/php_big_file_upload ] && [ ! -f /scripts/php_big_file_upload ]; then
+        warn "big-upload: /scripts/php_big_file_upload not present (non-CWP box?) — skipping"
+        return 0
+    fi
+    section "Bumping upload + memory limits to ${size_mb} MB (PHP + Nginx + Apache)"
+    log "Running: sh /scripts/php_big_file_upload ${size_mb} all"
+    if sh /scripts/php_big_file_upload "$size_mb" all; then
+        ok "Limits bumped: upload_max_filesize / post_max_size / memory_limit / client_max_body_size / LimitRequestBody = ${size_mb} MB"
+    else
+        warn "/scripts/php_big_file_upload returned non-zero — verify settings manually."
+    fi
+}
+
 # Run-stamp shared across all sourced scripts in a single install.sh invocation
 : "${BH_RUN_STAMP:=$(date +%Y%m%d-%H%M%S)}"
 export BH_RUN_STAMP

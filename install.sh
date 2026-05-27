@@ -58,6 +58,7 @@ BUILD_ONLY=0
 FIX_DNF_ONLY=0
 REFRESH_IONCUBE_ONLY=0
 FORCE_CONF=0
+BIG_UPLOAD_MB="${BH_BIG_UPLOAD_MB:-2048}"   # default 2048 MB; set 0 to skip
 
 usage() {
     cat <<'EOF'
@@ -89,6 +90,12 @@ Options:
                         Default: mongodb,sourceguardian — both emit noisy
                         deprecation/version warnings on every CLI invocation.
                         Pass --disable-ext= (empty) to disable nothing.
+  --big-upload=SIZE_MB  After build, run CWP's /scripts/php_big_file_upload
+                        SIZE_MB all  — bumps upload_max_filesize, post_max_size,
+                        memory_limit (PHP) + client_max_body_size (Nginx) +
+                        LimitRequestBody (Apache) across ALL PHP versions on
+                        the box. Default: 2048 (2GB).
+                        Pass --big-upload=0 to skip.
   -h, --help            This text.
 
 Examples:
@@ -108,6 +115,8 @@ while [ $# -gt 0 ]; do
         --refresh-ioncube) REFRESH_IONCUBE_ONLY=1; shift ;;
         --disable-ext)     BH_DISABLE_EXTENSIONS="$2"; shift 2 ;;
         --disable-ext=*)   BH_DISABLE_EXTENSIONS="${1#*=}"; shift ;;
+        --big-upload)      BIG_UPLOAD_MB="$2"; shift 2 ;;
+        --big-upload=*)    BIG_UPLOAD_MB="${1#*=}"; shift ;;
         -h|--help)    usage; exit 0 ;;
         *) err "Unknown argument: $1"; usage; exit 2 ;;
     esac
@@ -183,6 +192,10 @@ done
 # -----------------------------------------------------------------------------
 # ioncube auto-heal (stale-only) — safety net for CWP rebuilds wiping /usr/local/ioncube
 maybe_refresh_ioncube
+
+# Bump PHP + Nginx + Apache upload/memory limits across all PHP versions via CWP's helper.
+# Set BIG_UPLOAD_MB=0 (or --big-upload=0) to skip.
+apply_big_upload "$BIG_UPLOAD_MB"
 
 section "Summary"
 for spec in "${BUILT[@]}"; do

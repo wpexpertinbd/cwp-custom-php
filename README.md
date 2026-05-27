@@ -151,6 +151,7 @@ systemctl status php-fpm84
 | `--refresh-ioncube`   | Run only the ioncube refresh and exit. |
 | `--fix-dnf`           | Run only the curl-trap repair and exit. |
 | `--disable-ext=LIST`  | Comma-list of extensions to disable post-build (`.ini` renamed to `.ini.disabled`, `.so` kept). Default: `mongodb,sourceguardian` — both emit noisy deprecation/version warnings every CLI invocation. Pass `--disable-ext=` (empty) to keep everything enabled. |
+| `--big-upload=SIZE_MB`| After build, runs CWP's `/scripts/php_big_file_upload SIZE_MB all` — bumps `upload_max_filesize`, `post_max_size`, `memory_limit` (PHP) + `client_max_body_size` (Nginx) + `LimitRequestBody` (Apache) across **all** PHP versions on the box. Default: `2048` (2 GB) — high but matches BiswasHost filemanager use. Pass `--big-upload=0` to skip. |
 | `-h`, `--help`        | Help. |
 
 ## Environment overrides
@@ -158,6 +159,7 @@ systemctl status php-fpm84
 | Variable             | Effect |
 |----------------------|--------|
 | `BH_SKIP_IONCUBE=1`  | Don't auto-refresh ioncube at end of `--php` flow. |
+| `BH_BIG_UPLOAD_MB`   | Default size (MB) for `/scripts/php_big_file_upload`. Default `2048`. Set `0` to skip. |
 | `BH_REPO_URL`        | Override the curl\|bash clone source (defaults to this repo). |
 | `BH_REPO_BRANCH`     | Branch for curl\|bash mode (default `main`). |
 

@@ -21,18 +21,17 @@ build_php() {
     local PHPMAJOR="${1:?PHPMAJOR required}"   # 83 / 84 / 85
     local PHPVER="${2:?PHPVER required}"       # 8.4.21
 
-    section "Build PHP ${PHPVER}  (php-fpm${PHPMAJOR})"
+    section "Build PHP ${PHPVER}  (php-fpm${PHPMAJOR})  — atomic-swap deploy"
 
-    local FPMDIR="/opt/alt/php-fpm${PHPMAJOR}"
+    local FPMDIR="/opt/alt/php-fpm${PHPMAJOR}"                       # Final live path
+    local STAGE_ROOT="/usr/local/src/php-build/stage-${BH_RUN_STAMP}-${PHPMAJOR}"
+    local STAGE_FPMDIR="${STAGE_ROOT}${FPMDIR}"                      # Where DESTDIR puts the new install
     local CONFBASE="/usr/local/cwp/.conf/php-fpm_conf"
 
     [ -f "${CONFBASE}/php${PHPMAJOR}.conf" ] || \
         die "Missing build recipe: ${CONFBASE}/php${PHPMAJOR}.conf  (run deploy-conf first)"
 
-    # ---- Stop existing service, preserve user pools ----
-    stop_and_backup_pools "$PHPMAJOR" "$FPMDIR"
-
-    # ---- Build dependencies ----
+    # ---- Build dependencies (idempotent, safe while live) ----
     install_build_deps
 
     # ---- Compiler env (build-time only) — branched by EL major ----
@@ -40,12 +39,10 @@ build_php() {
     export OPENSSL_LIBS="-L/usr/lib64"
 
     if [ "${BH_EL_MAJOR:-8}" -eq 9 ]; then
-        # EL9: native OpenSSL 3.x, modern curl already present, no PIE workaround needed
         log "EL9 build profile: native OpenSSL 3.x, system curl, no PIE flags"
         export PKG_CONFIG_PATH="/usr/lib64/pkgconfig"
         export LDFLAGS="-lssl -lcrypto"
     else
-        # EL8: isolated curl 8.7.1, OpenSSL 1.1.1k, PIE flags for GCC 8.x
         log "EL8 build profile: isolated curl, PIE flags, OpenSSL 1.1.1k"
         setup_isolated_curl
         export PKG_CONFIG_PATH="/opt/curl-8.7.1/lib/pkgconfig:/usr/lib64/pkgconfig"
@@ -56,13 +53,9 @@ build_php() {
         export LDFLAGS="${LDFLAGS} -pie"
     fi
 
-    # ---- CWP pre-conf (pcre2, etc.) ----
+    # ---- CWP pre-conf (pcre2, libavif, ldap, etc.) ----
     if [ -e "${CONFBASE}/php${PHPMAJOR}_pre.conf" ]; then
         log "Running php${PHPMAJOR}_pre.conf"
-        # pre.conf runs scripts like libavif, pcre2, imap7, firebird, ldap —
-        # all best-effort auxiliary libraries. A non-zero from any of these
-        # should warn but not abort the build (e.g. ldap.sh's `ln -s` on a
-        # symlink that already exists).
         bash "${CONFBASE}/php${PHPMAJOR}_pre.conf" \
             || warn "php${PHPMAJOR}_pre.conf returned non-zero (non-fatal, continuing)"
     fi
@@ -70,53 +63,67 @@ build_php() {
     # ---- Resolve + download PHP source ----
     download_php_source "$PHPVER"
 
-    # ---- Configure via CWP-generated recipe ----
+    # ---- Configure with FINAL prefix (path baked into binaries matches post-swap location) ----
     cd "/usr/local/src/php-build/php-${PHPVER}"
     chmod +x "${CONFBASE}/php${PHPMAJOR}.conf" 2>/dev/null || true
-    log "Running php${PHPMAJOR}.conf (./configure)"
+    log "Running php${PHPMAJOR}.conf (./configure)  — prefix=${FPMDIR}/usr  (the LIVE path)"
     bash "${CONFBASE}/php${PHPMAJOR}.conf"
 
     # ---- Compile ----
-    log "Compiling PHP ${PHPVER} (this takes 5-15 minutes)"
+    log "Compiling PHP ${PHPVER} (this takes 5-15 minutes — tenants serve on EXISTING PHP during this window)"
     if command -v nproc >/dev/null 2>&1; then
         make -j"$(nproc)"
     else
         make
     fi
-    make install
-    ok "PHP ${PHPVER} compiled and installed"
 
-    # ---- php.ini + FPM scaffolding ----
-    setup_fpm_scaffolding "$PHPMAJOR" "$FPMDIR"
+    # ---- Install to STAGING via DESTDIR (so live install untouched) ----
+    log "DESTDIR install -> ${STAGE_FPMDIR}"
+    rm -rf "$STAGE_ROOT"
+    mkdir -p "$STAGE_ROOT"
+    DESTDIR="$STAGE_ROOT" make install
+    [ -d "$STAGE_FPMDIR" ] || die "DESTDIR install did not produce $STAGE_FPMDIR"
+    ok "PHP ${PHPVER} compiled and staged at ${STAGE_FPMDIR}"
 
-    # ---- Systemd service ----
+    # ---- php.ini + FPM scaffolding INSIDE staging ----
+    setup_fpm_scaffolding "$PHPMAJOR" "$FPMDIR" "$STAGE_FPMDIR"
+
+    # ---- Systemd unit (paths reference the FINAL location, OK to install live) ----
     install_systemd_service "$PHPMAJOR" "$FPMDIR"
 
     # ---- Apache FPM proxy module ----
     install_apache_proxy_module
 
-    # ---- External modules (imagick, redis, etc.) ----
+    # ====================================================================
+    # ATOMIC SWAP — only blocking section. Tenants 502 for ~2-5 seconds.
+    # ====================================================================
+    atomic_swap "$PHPMAJOR" "$FPMDIR" "$STAGE_FPMDIR"
+
+    # ---- External modules (imagick, redis, etc.) — now against the NEW LIVE install ----
+    # During this window (~3-5 min), sites using these extensions get errors.
+    # Core PHP is alive, but imagick/redis/memcache/ioncube haven't loaded yet.
     if [ -e "${CONFBASE}/php${PHPMAJOR}_external.conf" ]; then
-        log "Running php${PHPMAJOR}_external.conf (external modules)"
+        section "Building external modules (degraded window — imagick/redis/etc. unavailable)"
+        log "Sites using these extensions will error for ~3-5 min until each module finishes"
         bash "${CONFBASE}/php${PHPMAJOR}_external.conf" || warn "Some external modules failed (non-fatal)"
+        ok "External modules built; restarting FPM to load them"
+        systemctl restart "php-fpm${PHPMAJOR}" || warn "php-fpm${PHPMAJOR} did not restart cleanly"
     fi
 
     # ---- Auto-disable noisy extensions ----
     disable_noisy_extensions "$FPMDIR"
 
-    # ---- Restore preserved user pools ----
-    restore_pools "$PHPMAJOR" "$FPMDIR"
-
     # ---- Monit integration ----
     integrate_monit "$PHPMAJOR"
-
-    # ---- Restart service ----
-    systemctl restart "php-fpm${PHPMAJOR}" || warn "php-fpm${PHPMAJOR} did not start cleanly"
 
     # ---- CSF pignore ----
     update_csf_pignore "$FPMDIR"
 
-    # ---- Cleanup ----
+    # ---- Final restart so all extension changes take effect ----
+    systemctl restart "php-fpm${PHPMAJOR}" || warn "final restart had issues"
+
+    # ---- Cleanup staging (rollback dir kept) ----
+    rm -rf "$STAGE_ROOT"
     rm -rf /usr/local/src/php-build /usr/local/src/build-dir
     ok "PHP ${PHPVER} (php-fpm${PHPMAJOR}) build finished"
 }
@@ -125,48 +132,85 @@ build_php() {
 # Helpers
 # -----------------------------------------------------------------------------
 
-stop_and_backup_pools() {
-    local PHPMAJOR="$1" FPMDIR="$2"
-    if systemctl list-unit-files 2>/dev/null | grep -q "php-fpm${PHPMAJOR}.service"; then
-        log "Stopping php-fpm${PHPMAJOR}"
-        systemctl stop "php-fpm${PHPMAJOR}" || true
-    fi
-    if [ -d "${FPMDIR}/usr/etc/php-fpm.d/users" ]; then
-        local stash="/root/cwp-php-backups/${BH_RUN_STAMP}/php-fpm${PHPMAJOR}-users"
-        mkdir -p "$stash"
-        if compgen -G "${FPMDIR}/usr/etc/php-fpm.d/users/*.conf" > /dev/null; then
-            cp -a "${FPMDIR}/usr/etc/php-fpm.d/users/." "$stash/"
-            ok "Preserved $(ls "$stash" | wc -l) user pool configs at $stash"
-        fi
-    fi
-    if [ -d "$FPMDIR" ]; then
-        log "Removing old ${FPMDIR}"
-        rm -rf "$FPMDIR"
-    fi
-}
+# Atomic swap: the only blocking section of the build. Stop FPM, move dirs,
+# carry over user pool configs, restart FPM. ~2-5 sec downtime. If the new
+# install fails to start, auto-roll-back to the previous install.
+atomic_swap() {
+    local PHPMAJOR="$1" FPMDIR="$2" STAGE_FPMDIR="$3"
+    local SVC="php-fpm${PHPMAJOR}"
+    local ROLLBACK_DIR="${FPMDIR}.rollback.${BH_RUN_STAMP}"
 
-restore_pools() {
-    local PHPMAJOR="$1" FPMDIR="$2"
-    # First check current run's stash, then fall back to MOST RECENT prior stash
-    # (covers the case where a previous run failed mid-build: it preserved pools
-    # under its own stamp, deleted /opt/alt/php-fpmNN, and this is the retry run.)
-    local stash="/root/cwp-php-backups/${BH_RUN_STAMP}/php-fpm${PHPMAJOR}-users"
-    if [ ! -d "$stash" ] || ! compgen -G "${stash}/*.conf" > /dev/null; then
+    section "Atomic swap  — ~2-5 sec downtime window"
+
+    [ -d "$STAGE_FPMDIR" ] || die "Staging dir missing: $STAGE_FPMDIR  (build did not complete)"
+
+    # Stop service so the binaries aren't held by running processes during mv.
+    if systemctl list-unit-files 2>/dev/null | grep -q "${SVC}.service"; then
+        log "Stopping ${SVC}"
+        systemctl stop "$SVC" 2>/dev/null || true
+    fi
+
+    # Move old install aside as rollback; install new in its place.
+    if [ -d "$FPMDIR" ]; then
+        mv "$FPMDIR" "$ROLLBACK_DIR"
+        ok "Old install preserved at ${ROLLBACK_DIR}  (delete when satisfied with new build)"
+    fi
+    mv "$STAGE_FPMDIR" "$FPMDIR"
+    ok "Swapped staged install -> ${FPMDIR}"
+
+    # Carry over user pool configs from the rollback dir.
+    if [ -d "${ROLLBACK_DIR}/usr/etc/php-fpm.d/users" ] && \
+       compgen -G "${ROLLBACK_DIR}/usr/etc/php-fpm.d/users/*.conf" > /dev/null; then
+        mkdir -p "${FPMDIR}/usr/etc/php-fpm.d/users"
+        cp -a "${ROLLBACK_DIR}/usr/etc/php-fpm.d/users/." "${FPMDIR}/usr/etc/php-fpm.d/users/"
+        ok "Carried over $(ls "${FPMDIR}/usr/etc/php-fpm.d/users/"*.conf 2>/dev/null | wc -l) user pool configs"
+    elif [ -z "$(ls -A /root/cwp-php-backups/*/php-fpm${PHPMAJOR}-users/*.conf 2>/dev/null | head -1)" ]; then
+        log "No user pool configs to restore (fresh install)"
+    else
+        # No pools in rollback dir but a prior backup exists — fall back
         local prior
         prior=$(ls -1dt /root/cwp-php-backups/*/php-fpm${PHPMAJOR}-users 2>/dev/null \
                 | while read -r d; do
                       compgen -G "${d}/*.conf" >/dev/null && echo "$d" && break
                   done | head -1)
-        if [ -n "$prior" ] && [ -d "$prior" ]; then
-            stash="$prior"
-            log "Using prior run's pool stash: $stash"
+        if [ -n "$prior" ]; then
+            mkdir -p "${FPMDIR}/usr/etc/php-fpm.d/users"
+            cp -a "${prior}/." "${FPMDIR}/usr/etc/php-fpm.d/users/"
+            ok "Carried over pools from prior backup: $prior"
         fi
     fi
-    if [ -d "$stash" ] && compgen -G "${stash}/*.conf" > /dev/null; then
-        mkdir -p "${FPMDIR}/usr/etc/php-fpm.d/users"
-        cp -a "${stash}/." "${FPMDIR}/usr/etc/php-fpm.d/users/"
-        ok "Restored $(ls "$stash"/*.conf 2>/dev/null | wc -l) user pool configs from $stash"
+
+    # Reload systemd in case the unit file just got installed/updated.
+    systemctl daemon-reload
+
+    # Start new service.
+    log "Starting ${SVC}"
+    systemctl start "$SVC" 2>/dev/null
+
+    # Give it a moment, then verify.
+    sleep 2
+    if systemctl is-active --quiet "$SVC"; then
+        ok "${SVC} active  — atomic swap complete"
+        return 0
     fi
+
+    # FAILURE PATH — rollback.
+    err "${SVC} failed to start with new install. Rolling back."
+    systemctl stop "$SVC" 2>/dev/null || true
+    if [ -d "$ROLLBACK_DIR" ]; then
+        mv "$FPMDIR" "${FPMDIR}.failed.${BH_RUN_STAMP}"
+        mv "$ROLLBACK_DIR" "$FPMDIR"
+        systemctl daemon-reload
+        systemctl start "$SVC"
+        if systemctl is-active --quiet "$SVC"; then
+            ok "Rolled back to previous install. Service restored. New (failed) build at ${FPMDIR}.failed.${BH_RUN_STAMP}"
+        else
+            err "Rollback restart ALSO failed. Manual intervention needed: check journalctl -u ${SVC}"
+        fi
+    else
+        err "No rollback dir to restore from. Was this a fresh install?"
+    fi
+    die "atomic_swap failed — see logs above"
 }
 
 install_build_deps() {
@@ -274,24 +318,29 @@ download_php_source() {
 }
 
 setup_fpm_scaffolding() {
-    local PHPMAJOR="$1" FPMDIR="$2"
+    # FPMDIR = path that gets baked INTO the config content (the final live path
+    # after atomic swap). TARGET = where the files actually get written to right
+    # now (the staging dir during build; or = FPMDIR for the old in-place flow).
+    local PHPMAJOR="$1" FPMDIR="$2" TARGET="${3:-$2}"
 
-    mkdir -p "${FPMDIR}/usr/php/php.d" \
-             "${FPMDIR}/usr/var/sockets" \
-             "${FPMDIR}/usr/etc/php-fpm.d" \
-             "${FPMDIR}/usr/etc/php-fpm.d/users"
+    mkdir -p "${TARGET}/usr/php/php.d" \
+             "${TARGET}/usr/var/sockets" \
+             "${TARGET}/usr/etc/php-fpm.d" \
+             "${TARGET}/usr/etc/php-fpm.d/users"
 
-    rsync php.ini-production "${FPMDIR}/usr/php/php.ini"
+    rsync php.ini-production "${TARGET}/usr/php/php.ini"
 
-    sed -i 's/^short_open_tag.*/short_open_tag = On/'                            "${FPMDIR}/usr/php/php.ini"
-    sed -i 's/^;cgi.fix_pathinfo=.*/cgi.fix_pathinfo=1/'                         "${FPMDIR}/usr/php/php.ini"
-    sed -i 's/.*mail.add_x_header.*/mail.add_x_header = On/'                    "${FPMDIR}/usr/php/php.ini"
-    sed -i 's@.*mail.log.*@mail.log = /usr/local/apache/logs/phpmail.log@'      "${FPMDIR}/usr/php/php.ini"
+    sed -i 's/^short_open_tag.*/short_open_tag = On/'                            "${TARGET}/usr/php/php.ini"
+    sed -i 's/^;cgi.fix_pathinfo=.*/cgi.fix_pathinfo=1/'                         "${TARGET}/usr/php/php.ini"
+    sed -i 's/.*mail.add_x_header.*/mail.add_x_header = On/'                    "${TARGET}/usr/php/php.ini"
+    sed -i 's@.*mail.log.*@mail.log = /usr/local/apache/logs/phpmail.log@'      "${TARGET}/usr/php/php.ini"
 
-    echo "include=${FPMDIR}/usr/etc/php-fpm.d/users/*.conf" > "${FPMDIR}/usr/etc/php-fpm.d/users.conf"
-    echo "include=${FPMDIR}/usr/etc/php-fpm.d/*.conf"      > "${FPMDIR}/usr/etc/php-fpm.conf"
+    # File CONTENT references FPMDIR (the final live path after swap),
+    # files themselves are WRITTEN to TARGET (staging during atomic-swap build).
+    echo "include=${FPMDIR}/usr/etc/php-fpm.d/users/*.conf" > "${TARGET}/usr/etc/php-fpm.d/users.conf"
+    echo "include=${FPMDIR}/usr/etc/php-fpm.d/*.conf"      > "${TARGET}/usr/etc/php-fpm.conf"
 
-    cat > "${FPMDIR}/usr/etc/php-fpm.d/cwpsvc.conf" <<EOF
+    cat > "${TARGET}/usr/etc/php-fpm.d/cwpsvc.conf" <<EOF
 [cwpsvc]
 listen = ${FPMDIR}/usr/var/sockets/cwpsvc.sock
 listen.owner = cwpsvc
@@ -305,7 +354,7 @@ pm.process_idle_timeout = 15s
 request_terminate_timeout = 0
 EOF
 
-    ok "FPM scaffolding written"
+    ok "FPM scaffolding written to ${TARGET}  (content paths -> ${FPMDIR})"
 }
 
 install_systemd_service() {

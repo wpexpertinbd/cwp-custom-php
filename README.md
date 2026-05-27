@@ -15,7 +15,7 @@ A single auto-detecting script that:
 5. **Builds PHP** with EL-aware compile profile:
    - **EL8**: isolated `curl 8.7.1` under `/opt/curl-8.7.1/` (used only at build-time — never touches `/usr/local/lib`, never breaks dnf), PIE flags, OpenSSL 1.1.1k
    - **EL9**: native OpenSSL 3.x, system curl, no PIE — simpler and faster
-6. Preserves `/opt/alt/php-fpmNN/usr/etc/php-fpm.d/users/*.conf` across rebuilds — existing tenants keep running on upgrade
+6. **Atomic-swap deploy** — core PHP is built into `STAGE_DIR` via `DESTDIR`. Tenants keep serving on the EXISTING `/opt/alt/php-fpmNN` for the entire ~10-15 min compile window. Atomic swap is ~2-5 sec. User pool configs carry over from the old install. **Auto-rollback if the new install fails to start** — old install restored from `.rollback.<stamp>` dir, service brought back online in seconds. Extensions (imagick/redis/memcache/ioncube) build AFTER swap — ~3-5 min degraded window where sites using those extensions error before they finish loading.
 7. Builds all the **PECL extensions you actually need** — memcache (websupport-sk fork), memcached, redis (phpredis git), imagick, ioncube, mongodb, apcu, mailparse, xdebug, etc.
 8. **Auto-heals ioncube** after every CWP rebuild — fixes the wart where `sh /scripts/update_cwp` or CWP's "Rebuild Apache + PHP-FPM" overwrites `/usr/local/ioncube/` with the stale bundled tarball missing 8.4/8.5 loaders
 9. Wires systemd unit, Apache `mod_proxy_fcgi`, monit watcher, CSF `pignore` — all auto-applied

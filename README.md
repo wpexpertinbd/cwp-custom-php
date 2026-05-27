@@ -31,14 +31,35 @@ Idempotent — safe to re-run, safe to upgrade point releases.
 ## Quick install
 
 ```bash
-# SSH to target server as root, then ONE of these:
+# SSH to target server as root. The safe default rollout below builds PHP
+# atomically and never touches CWP's system PHP, /usr/local/lib*/, or
+# /usr/local/bin/* — so it's safe on any server.
 ```
 
-### Build the latest 8.4
+### Recommended fleet rollout (safe defaults)
+
+Run as root on each target server. Each version installs independently with atomic-swap (zero compile-time downtime, auto-rollback on failure):
+
+```bash
+for v in 8.5 8.4 8.3 8.2; do
+  curl -fsSL https://raw.githubusercontent.com/wpexpertinbd/cwp-custom-php/main/install.sh \
+    | bash -s -- --php $v=latest --force-conf 2>&1 \
+    | tee /root/cwp-custom-php-$v-$(hostname -s)-$(date +%Y%m%d-%H%M%S).log
+done
+```
+
+This is **all you need on a fresh server**. After it completes:
+- PHP 8.2, 8.3, 8.4, 8.5 are built and visible in CWP Admin → PHP-FPM Selector
+- CWP's own PHP installs (5.x, 7.x, 8.0, 8.1) are untouched
+- `/usr/local/lib*/` and `/usr/local/bin/*` are untouched
+- Existing CWP system PHP-CGI (PHP Version Switcher UI) is untouched
+- ionCube auto-healed, `mongodb`/`sourceguardian` extensions default-disabled
+
+### Build a single version
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/wpexpertinbd/cwp-custom-php/main/install.sh \
-  | bash -s -- --php 8.4
+  | bash -s -- --php 8.4=latest
 ```
 
 ### Pin a specific version
@@ -48,28 +69,18 @@ curl -fsSL https://raw.githubusercontent.com/wpexpertinbd/cwp-custom-php/main/in
   | bash -s -- --php 8.4=8.4.21
 ```
 
-### Build all three at once
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/wpexpertinbd/cwp-custom-php/main/install.sh \
-  | bash -s -- --php 8.3,8.4,8.5
-```
-
-### Resolve latest at runtime (queries php.net)
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/wpexpertinbd/cwp-custom-php/main/install.sh \
-  | bash -s -- --php 8.3=latest,8.4=latest,8.5=latest
-```
-
 ### Update an existing custom PHP to a newer point release
 
-Same command — the script is idempotent. It will stop the old service, preserve user pool configs, rebuild, restore pools, restart.
+Same command — the script is idempotent. Atomic-swap means tenants serve on the existing PHP throughout the build; the swap is ~2-5 sec.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/wpexpertinbd/cwp-custom-php/main/install.sh \
-  | bash -s -- --php 8.4=8.4.22
+  | bash -s -- --php 8.4=latest
 ```
+
+### ⚠️ Advanced flags — only use after reading the warnings
+
+`--clean-shadow-libs` and `--system-php=X.Y` exist for specific repair scenarios but **caused tenant outages on s1 (2026-05-27)** when used as part of the default rollout. They override CWP's behaviour for `/usr/local/bin/php*` and `/usr/local/lib*/`. Don't include them in fleet rollout commands unless you have a specific known problem and have read what they do in the [Options reference](#options-reference) below.
 
 ## Pick the command that matches your situation
 
@@ -152,8 +163,8 @@ systemctl status php-fpm84
 | `--fix-dnf`           | Run only the curl-trap repair and exit. |
 | `--disable-ext=LIST`  | Comma-list of extensions to disable post-build (`.ini` renamed to `.ini.disabled`, `.so` kept). Default: `mongodb,sourceguardian` — both emit noisy deprecation/version warnings every CLI invocation. Pass `--disable-ext=` (empty) to keep everything enabled. |
 | `--big-upload=SIZE_MB`| After build, runs CWP's `/scripts/php_big_file_upload SIZE_MB all` — bumps `upload_max_filesize`, `post_max_size`, `memory_limit` (PHP) + `client_max_body_size` (Nginx) + `LimitRequestBody` (Apache) across **all** PHP versions on the box. Default: `2048` (2 GB) — high but matches BiswasHost filemanager use. Pass `--big-upload=0` to skip. |
-| `--clean-shadow-libs` | When preflight detects shadow libs/binaries in `/usr/local/lib*/` or `/usr/local/bin/`, auto-quarantine them to `/root/cwp-php-backups/stale-libs/`. Default is **warn-only**. Use this on your fleet after you've confirmed the pattern is safe (saves a manual cleanup step per server). |
-| `--system-php=X.Y`    | After build, symlink `/usr/local/bin/{php,php-cgi,phpdbg,php-config,phpize}` → `/opt/alt/php-fpmXY/usr/bin/`. Makes "CWP system PHP" route through our custom build. Replaces the manual `ln -sfn` ritual. Example: `--system-php=8.3`. |
+| `--clean-shadow-libs` | ⚠️ **Advanced — opt-in only**. Quarantines shadow libs (`/usr/local/lib*/`) and a narrow allowlist of non-PHP binaries (`/usr/local/bin/curl`, `pcre2grep`, `zipcmp`, etc.) to `/root/cwp-php-backups/stale-libs/`. **Skips** `/usr/local/bin/{php,php-cgi,phpdbg,lsphp}` because those are CWP system PHP binaries (use CWP's PHP Version Switcher UI to rebuild them, not this flag). Default is warn-only — recommended unless you have a specific known conflict. |
+| `--system-php=X.Y`    | ⚠️ **Advanced — opt-in only**. After build, symlink `/usr/local/bin/{php,php-cgi,phpdbg,php-config,phpize}` → `/opt/alt/php-fpmXY/usr/bin/`. Bypasses CWP's "PHP Version Switcher" UI — the dashboard will show whatever the symlink resolves to. Replaces the manual `ln -sfn` ritual. Example: `--system-php=8.3`. |
 | `-h`, `--help`        | Help. |
 
 ## Environment overrides

@@ -202,9 +202,17 @@ check_shadow_bins() {
     done
     if [ "$found" -gt 0 ]; then
         warn ""
-        warn "Quarantine these binaries alongside the libs OR rebuild them against system /usr/lib64 libs."
-        warn "Most common case: /usr/local/bin/curl built against custom libcurl — quarantine and let"
-        warn "system /usr/bin/curl take over (PATH fallback) unless you specifically need the newer one."
+        warn "Cleanup guidance per binary type:"
+        warn ""
+        warn "  /usr/local/bin/curl, pcre2grep, zipcmp, zipmerge, ziptool, etc."
+        warn "    -> Safe to quarantine. System /usr/bin/ equivalents take over via PATH."
+        warn ""
+        warn "  /usr/local/bin/php, php-cgi, phpdbg, lsphp  (CWP SYSTEM PHP binaries)"
+        warn "    -> DO NOT quarantine. They are managed by CWP's 'PHP Version Switcher' UI."
+        warn "    -> If broken: use CWP Admin -> PHP Settings -> PHP Version Switcher to rebuild."
+        warn "    -> OR symlink them to /opt/alt/php-fpmNN/usr/bin/ with our --system-php=X.Y flag."
+        warn ""
+        warn "The default --clean-shadow-libs behaviour SKIPS php/php-cgi/phpdbg/lsphp on purpose."
     fi
 }
 
@@ -297,19 +305,28 @@ auto_quarantine_shadows() {
     fi
 
     # Binaries in /usr/local/bin that we know commonly depend on shadow libs.
-    # Check each ldd; only move if it actually links to /usr/local/lib*
+    #
+    # CRITICAL: do NOT include php / php-cgi / phpdbg here. Those are CWP's
+    # SYSTEM PHP-CGI binaries — used by Apache's PHP-CGI handler for any
+    # site set to "system PHP" via CWP's PHP Version Switcher UI.
+    # Quarantining them = all CGI-handler sites 500 immediately (real
+    # incident on s1, 2026-05-27, ~1 hour of WP outage). For the system
+    # PHP binaries, the right fix is to use CWP's PHP Version Switcher UI
+    # to rebuild — NOT for us to quarantine.
+    #
+    # Only quarantine non-PHP system tools that are commonly built fresh
+    # in /usr/local/bin/ from prior manual ./configure && make install
+    # cycles (curl, pcre2grep, zip*, etc.). The system has RPM-installed
+    # equivalents at /usr/bin/ that take over via PATH fallback.
     local moved_bins=0
-    for bin in /usr/local/bin/curl /usr/local/bin/lsphp /usr/local/bin/php \
-               /usr/local/bin/php-cgi /usr/local/bin/phpdbg \
+    for bin in /usr/local/bin/curl \
                /usr/local/bin/pcre2grep /usr/local/bin/pcre2test \
                /usr/local/bin/zipcmp /usr/local/bin/zipmerge /usr/local/bin/ziptool
     do
         [ -x "$bin" ] || continue
-        # If the binary STILL resolves cleanly (system libs only), leave it alone.
-        # Only move if it references the now-quarantined /usr/local/lib path.
-        # Easier check: just move it — it was built against the lib we removed,
-        # so it's broken now. Better to quarantine than leave a broken binary.
-        # But we can be conservative: only move if ldd shows "not found".
+        # Only move if ldd shows the binary is BROKEN ("not found") OR
+        # explicitly links into /usr/local/lib. Healthy binaries that
+        # link cleanly to /lib64/* are left alone.
         if ldd "$bin" 2>/dev/null | grep -qE 'not found|/usr/local/lib'; then
             mv "$bin" "$stale_dir/" 2>/dev/null && moved_bins=$((moved_bins + 1))
         fi

@@ -1,28 +1,77 @@
 #!/bin/bash
-if [ -e "/opt/alt/php-fpm83/usr/bin/php-config" ];then
-cd /usr/local/src
-yum -y install epel-release
-yum -y install redis
-systemctl start redis
-systemctl enable redis
-rm -rf redis-*
-rm -rf redis*
-curl https://pecl.php.net/get/redis -o redis.tgz
-tar -xf redis.tgz
-cd redis-*/
-/opt/alt/php-fpm83/usr/bin/phpize
-./configure --with-php-config=/opt/alt/php-fpm83/usr/bin/php-config
-make && make install
+set -euo pipefail
+
 echo ""
+echo "=== redis.sh (Auto-detect PHP 8.2 / 8.5, GitHub source) ==="
 
-PHPEXTDIR=`/opt/alt/php-fpm83/usr/bin/php-config --extension-dir`
+# ---------------------------------------------------------
+# REAL script path (CWP copies to temp folder)
+# ---------------------------------------------------------
+SCRIPT_REAL_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
 
-if [ -e "$PHPEXTDIR/redis.so" ];then 
-	echo "Creating config file"
-	grep "redis.so" /opt/alt/php-fpm83/usr/php/php.d/redis.ini 2> /dev/null 1> /dev/null|| echo "extension=redis.so" > /opt/alt/php-fpm83/usr/php/php.d/redis.ini
+if   [[ "$SCRIPT_REAL_PATH" == *"/8.2/"* ]]; then PHPFPM="/opt/alt/php-fpm82"
+elif [[ "$SCRIPT_REAL_PATH" == *"/8.3/"* ]]; then PHPFPM="/opt/alt/php-fpm83"
+elif [[ "$SCRIPT_REAL_PATH" == *"/8.4/"* ]]; then PHPFPM="/opt/alt/php-fpm84"
+elif [[ "$SCRIPT_REAL_PATH" == *"/8.5/"* ]]; then PHPFPM="/opt/alt/php-fpm85"
 else
-	echo "ERROR: Missing extension file $PHPEXTDIR/redis.so"
+    echo "ERROR: Script is not inside 8.2 / 8.3 / 8.4 / 8.5 external_modules folder."
+    echo "Real path: ${SCRIPT_REAL_PATH}"
+    exit 1
 fi
-else
-echo "Skipping as php build failed"
+
+PHPCONFIG="${PHPFPM}/usr/bin/php-config"
+PHPIZE="${PHPFPM}/usr/bin/phpize"
+PHPINIDIR="${PHPFPM}/usr/php/php.d"
+PHPEXTDIR="$(${PHPCONFIG} --extension-dir)"
+
+echo "Detected PHP from folder: $PHPFPM"
+echo "Extension dir: $PHPEXTDIR"
+
+# ---------------------------------------------------------
+# Install redis server (optional)
+# ---------------------------------------------------------
+dnf -y install redis || true
+systemctl enable redis --now || true
+
+# ---------------------------------------------------------
+# Build redis extension from GitHub (latest PHP 8.5 compatible)
+# ---------------------------------------------------------
+cd /usr/local/src
+rm -rf phpredis redis* || true
+
+echo "Cloning phpredis from GitHub..."
+git clone https://github.com/phpredis/phpredis.git
+cd phpredis
+
+echo "Running phpize..."
+${PHPIZE}
+
+echo "Configuring redis extension..."
+./configure --with-php-config="${PHPCONFIG}"
+
+echo "Compiling redis extension..."
+make -j"$(nproc)"
+make install
+
+# ---------------------------------------------------------
+# Validation
+# ---------------------------------------------------------
+if [ ! -f "${PHPEXTDIR}/redis.so" ]; then
+    echo "ERROR: redis.so was NOT built!"
+    exit 1
 fi
+
+# ---------------------------------------------------------
+# Enable extension
+# ---------------------------------------------------------
+REDISINI="${PHPINIDIR}/redis.ini"
+
+echo "Creating redis.ini..."
+echo "extension=redis.so" > "${REDISINI}"
+
+echo ""
+echo "=========================================="
+echo " Redis extension installed successfully for"
+echo " PHP: ${PHPFPM}"
+echo "=========================================="
+exit 0

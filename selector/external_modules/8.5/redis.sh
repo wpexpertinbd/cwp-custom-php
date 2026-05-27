@@ -2,19 +2,19 @@
 set -euo pipefail
 
 echo ""
-echo "=== redis.sh (Auto-detect PHP 8.4 / 8.5, GitHub source) ==="
+echo "=== redis.sh (Auto-detect PHP 8.2 / 8.5, GitHub source) ==="
 
 # ---------------------------------------------------------
 # REAL script path (CWP copies to temp folder)
 # ---------------------------------------------------------
 SCRIPT_REAL_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
 
-if [[ "$SCRIPT_REAL_PATH" == *"/8.4/"* ]]; then
-    PHPFPM="/opt/alt/php-fpm84"
-elif [[ "$SCRIPT_REAL_PATH" == *"/8.5/"* ]]; then
-    PHPFPM="/opt/alt/php-fpm85"
+if   [[ "$SCRIPT_REAL_PATH" == *"/8.2/"* ]]; then PHPFPM="/opt/alt/php-fpm82"
+elif [[ "$SCRIPT_REAL_PATH" == *"/8.3/"* ]]; then PHPFPM="/opt/alt/php-fpm83"
+elif [[ "$SCRIPT_REAL_PATH" == *"/8.4/"* ]]; then PHPFPM="/opt/alt/php-fpm84"
+elif [[ "$SCRIPT_REAL_PATH" == *"/8.5/"* ]]; then PHPFPM="/opt/alt/php-fpm85"
 else
-    echo "ERROR: Script is not inside 8.4 or 8.5 external_modules folder."
+    echo "ERROR: Script is not inside 8.2 / 8.3 / 8.4 / 8.5 external_modules folder."
     echo "Real path: ${SCRIPT_REAL_PATH}"
     exit 1
 fi

@@ -1,10 +1,10 @@
 #!/bin/bash
 # IonCube Loader installer for CWP alt-PHP
-# Works for PHP 8.3, 8.2, 8.5
+# Works for PHP 8.2, 8.3, 8.4, 8.5
 set -euo pipefail
 
 # Detect PHP major
-PHPMAJOR="${PHPMAJOR:-84}"    # it is 83 or 84 or 85
+PHPMAJOR="${PHPMAJOR:-82}"    # it is 83 or 84 or 85
 PHPVERSION="8.2"
 FPMDIR="/opt/alt/php-fpm${PHPMAJOR}"
 PHPBIN="${FPMDIR}/usr/bin/php"

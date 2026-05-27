@@ -55,6 +55,64 @@ preflight() {
     ok "toolchain present"
 }
 
+# Scan /usr/local/lib*/ for libs that shadow system /usr/lib64 versions.
+# Doesn't auto-remove — those libs may still be in use by other manually-
+# installed software. Just warns with the exact mv commands.
+check_shadow_libs() {
+    local local_dirs=(/usr/local/lib /usr/local/lib64)
+    # Libraries critical to PHP runtime that frequently cause symbol mismatches
+    local watched=(libzip libcurl libssl libcrypto libxml2 libpng libjpeg libwebp libavif libonig libsodium)
+
+    local found=0
+    local d lib f sys_lib
+    for d in "${local_dirs[@]}"; do
+        [ -d "$d" ] || continue
+        for lib in "${watched[@]}"; do
+            # Find all numbered .so files under this dir for this lib
+            for f in "$d"/${lib}.so.*; do
+                [ -f "$f" ] || continue
+                # Skip the unversioned symlink (lib.so) and major-only symlink (lib.so.X)
+                # — we want actual files, which look like lib.so.X.Y or lib.so.X.Y.Z
+                local base
+                base="$(basename "$f")"
+                if [[ "$base" =~ ^${lib}\.so\.[0-9]+\.[0-9]+ ]]; then
+                    # Real file. Check if there's a corresponding system one in /usr/lib64
+                    if [ -f "/usr/lib64/${lib}.so" ] || compgen -G "/usr/lib64/${lib}.so.*" > /dev/null; then
+                        sys_lib=$(ls -1 /usr/lib64/${lib}.so.* 2>/dev/null | grep -vE '\.so\.[0-9]+$' | head -1)
+                        [ -z "$sys_lib" ] && sys_lib="/usr/lib64/${lib}.so.*"
+                        if [ "$found" -eq 0 ]; then
+                            warn ""
+                            warn "Found stale lib(s) in $d/ that may shadow system /usr/lib64 versions:"
+                            warn "These cause undefined-symbol crashes if PHP builds against newer system"
+                            warn "headers but the runtime linker picks the older /usr/local/lib version."
+                            warn ""
+                        fi
+                        warn "  Shadow: $f"
+                        warn "  System: $sys_lib  (RPM: $(rpm -qf /usr/lib64/${lib}.so.* 2>/dev/null | head -1))"
+                        found=$((found + 1))
+                    fi
+                fi
+            done
+        done
+    done
+
+    if [ "$found" -gt 0 ]; then
+        warn ""
+        warn "Cleanup (NOT auto-applied — these files may still be used by other software you"
+        warn "installed manually). To quarantine all shadows and let RPM-installed libs take over:"
+        warn ""
+        warn "  mkdir -p /root/cwp-php-backups/stale-libs"
+        warn "  mv /usr/local/lib64/{libzip,libcurl,libssl,libcrypto}.so* /root/cwp-php-backups/stale-libs/ 2>/dev/null"
+        warn "  ldconfig"
+        warn "  ldd /opt/alt/php-fpm84/usr/bin/php | grep -E '(libzip|libcurl|libssl)'"
+        warn "  systemctl restart php-fpm83 php-fpm84 php-fpm85"
+        warn ""
+        warn "If 'php -i | head -3' shows 'symbol lookup error', shadow libs are crashing PHP — clean them."
+    else
+        ok "No shadow libs detected in /usr/local/lib*/"
+    fi
+}
+
 fix_curl_ld_trap() {
     # Scan EVERY file in /etc/ld.so.conf.d/ for /usr/local references —
     # the trap isn't always called curl-local.conf.
@@ -84,6 +142,15 @@ fix_curl_ld_trap() {
         ldconfig
         ok "Disabled $trapped ld.so trap entry/entries and ran ldconfig"
     fi
+
+    # Scan /usr/local/lib*/ for SHADOW libs that override system ones at runtime.
+    # Same pattern as the libcurl trap — old manual builds drop newer (or in some
+    # cases OLDER) .so files into /usr/local/lib64 which is in ld's default search
+    # path, silently overriding /usr/lib64 RPM-installed libs. Real-world break:
+    # libzip 1.5.x in /usr/local/lib64 shadowed Remi's libzip 1.11.4 in /usr/lib64,
+    # PHP 8.3 zip ext crashed on undefined symbol zip_compression_method_supported,
+    # Blesta hit 503 while WordPress worked fine.
+    check_shadow_libs
 
     # Verify librepo is using system libcurl
     if command -v ldd >/dev/null 2>&1 && [ -f /usr/lib64/librepo.so.0 ]; then

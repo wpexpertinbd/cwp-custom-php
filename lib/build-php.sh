@@ -77,12 +77,40 @@ build_php() {
         make
     fi
 
-    # ---- Install to STAGING via DESTDIR (so live install untouched) ----
-    log "DESTDIR install -> ${STAGE_FPMDIR}"
+    # ---- Install to STAGING via INSTALL_ROOT (so live install untouched) ----
+    # PHP's Makefile uses $(INSTALL_ROOT) for staging installs in install-modules,
+    # install-cli, install-build, install-headers, install-fpm etc. Pure DESTDIR
+    # is silently ignored by some of those targets in PHP 8.x — files end up at
+    # the live path. We pass BOTH variables to cover every PHP version safely.
+    log "Staged install -> ${STAGE_FPMDIR}  (INSTALL_ROOT + DESTDIR)"
     rm -rf "$STAGE_ROOT"
     mkdir -p "$STAGE_ROOT"
-    DESTDIR="$STAGE_ROOT" make install
-    [ -d "$STAGE_FPMDIR" ] || die "DESTDIR install did not produce $STAGE_FPMDIR"
+
+    # Snapshot live FPMDIR mtime so we can detect accidental writes to live.
+    local LIVE_MTIME_BEFORE=""
+    [ -d "${FPMDIR}/usr/sbin" ] && LIVE_MTIME_BEFORE=$(stat -c %Y "${FPMDIR}/usr/sbin" 2>/dev/null)
+
+    INSTALL_ROOT="$STAGE_ROOT" DESTDIR="$STAGE_ROOT" make install \
+        INSTALL_ROOT="$STAGE_ROOT" DESTDIR="$STAGE_ROOT"
+
+    # Hard safety check: if staging dir is empty AND live dir mtime changed,
+    # PHP wrote to live behind our back. Abort loudly before the user thinks
+    # nothing happened.
+    if [ ! -d "$STAGE_FPMDIR" ]; then
+        if [ -n "$LIVE_MTIME_BEFORE" ]; then
+            local LIVE_MTIME_AFTER
+            LIVE_MTIME_AFTER=$(stat -c %Y "${FPMDIR}/usr/sbin" 2>/dev/null)
+            if [ -n "$LIVE_MTIME_AFTER" ] && [ "$LIVE_MTIME_AFTER" != "$LIVE_MTIME_BEFORE" ]; then
+                err "PHP make install wrote directly to LIVE ${FPMDIR} despite INSTALL_ROOT/DESTDIR."
+                err "Atomic-swap protection failed. The new binaries are already in place at ${FPMDIR}."
+                err "Service may be in an inconsistent state. Recommendation:"
+                err "  1. Re-run this installer with the same flags (it will now atomic-swap correctly)"
+                err "  2. OR manually run external modules:  bash ${CONFBASE}/php${PHPMAJOR}_external.conf"
+                err "  3. OR run with BH_SKIP_ATOMIC_SWAP=1 to use the legacy rm-then-build path"
+            fi
+        fi
+        die "INSTALL_ROOT/DESTDIR install did not produce $STAGE_FPMDIR"
+    fi
     ok "PHP ${PHPVER} compiled and staged at ${STAGE_FPMDIR}"
 
     # ---- php.ini + FPM scaffolding INSIDE staging ----

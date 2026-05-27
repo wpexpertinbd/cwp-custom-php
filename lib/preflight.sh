@@ -97,19 +97,72 @@ check_shadow_libs() {
     done
 
     if [ "$found" -gt 0 ]; then
+        # Also scan /usr/local/bin/ for binaries that LINK against these shadow libs.
+        # Moving the libs without also handling these binaries breaks them with
+        # error 48 "Unknown option was passed in to libcurl" (or equivalent).
+        check_shadow_bins
         warn ""
         warn "Cleanup (NOT auto-applied — these files may still be used by other software you"
         warn "installed manually). To quarantine all shadows and let RPM-installed libs take over:"
         warn ""
         warn "  mkdir -p /root/cwp-php-backups/stale-libs"
         warn "  mv /usr/local/lib64/{libzip,libcurl,libssl,libcrypto}.so* /root/cwp-php-backups/stale-libs/ 2>/dev/null"
+        warn "  mv /usr/local/lib/{libzip,libcurl,libssl,libcrypto}.so*   /root/cwp-php-backups/stale-libs/ 2>/dev/null"
         warn "  ldconfig"
+        warn ""
+        warn "If you ALSO see warnings about /usr/local/bin/ binaries above, quarantine them too:"
+        warn "  mv /usr/local/bin/curl /root/cwp-php-backups/stale-libs/curl-bin   # example"
+        warn "  hash -r"
+        warn ""
+        warn "Then verify:"
         warn "  ldd /opt/alt/php-fpm84/usr/bin/php | grep -E '(libzip|libcurl|libssl)'"
         warn "  systemctl restart php-fpm83 php-fpm84 php-fpm85"
         warn ""
         warn "If 'php -i | head -3' shows 'symbol lookup error', shadow libs are crashing PHP — clean them."
     else
         ok "No shadow libs detected in /usr/local/lib*/"
+    fi
+}
+
+# Scan /usr/local/bin/ for binaries that link against shadow libs in /usr/local/lib*/.
+# These binaries break (curl error 48, etc.) the moment shadow libs are moved aside,
+# because they were compiled against the newer shadow versions. Identify them so the
+# user can quarantine the matching binaries in the same cleanup pass.
+check_shadow_bins() {
+    [ -d /usr/local/bin ] || return 0
+    command -v ldd >/dev/null 2>&1 || return 0
+
+    local watched='libzip|libcurl|libssl|libcrypto|libxml2|libpng|libjpeg|libwebp|libavif|libonig|libsodium'
+    local found=0
+    local bin
+
+    for bin in /usr/local/bin/*; do
+        [ -x "$bin" ] || continue
+        [ -f "$bin" ] || continue
+        # Look for any link that points BACK at /usr/local/lib*/ for a watched lib
+        local hits
+        hits=$(ldd "$bin" 2>/dev/null \
+                 | grep -E "($watched)\.so" \
+                 | grep -E '/usr/local/lib' \
+                 || true)
+        if [ -n "$hits" ]; then
+            if [ "$found" -eq 0 ]; then
+                warn ""
+                warn "Binaries in /usr/local/bin/ that depend on shadow libs (will break when libs are quarantined):"
+                warn ""
+            fi
+            warn "  $bin"
+            echo "$hits" | while read -r ln; do
+                warn "    -> $ln"
+            done
+            found=$((found + 1))
+        fi
+    done
+    if [ "$found" -gt 0 ]; then
+        warn ""
+        warn "Quarantine these binaries alongside the libs OR rebuild them against system /usr/lib64 libs."
+        warn "Most common case: /usr/local/bin/curl built against custom libcurl — quarantine and let"
+        warn "system /usr/bin/curl take over (PATH fallback) unless you specifically need the newer one."
     fi
 }
 

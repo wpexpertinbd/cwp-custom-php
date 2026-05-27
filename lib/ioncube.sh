@@ -117,6 +117,9 @@ refresh_ioncube() {
     for fpm in /opt/alt/php-fpm*; do
         [ -d "$fpm" ] || continue
         major=$(basename "$fpm" | sed 's/^php-fpm//')
+        # Skip atomic-swap leftover dirs (.rollback.<stamp>, .failed.<stamp>, etc.)
+        # — they're backups, not real PHP installs.
+        case "$major" in (*.rollback.*|*.failed.*|*.bak.*|*.old.*) continue ;; esac
         dotver="${major:0:1}.${major:1}"
         loader="${IONCUBE_DIR}/ioncube_loader_lin_${dotver}.so"
         inidir="${fpm}/usr/php/php.d"
@@ -153,13 +156,14 @@ refresh_ioncube() {
         fi
     done
 
-    # ---- Trigger CWP refresh if available ----
-    if [ -x /scripts/update_cwp ]; then
-        log "Running /scripts/update_cwp"
-        sh /scripts/update_cwp >/dev/null 2>&1 \
-            && ok "/scripts/update_cwp completed" \
-            || warn "/scripts/update_cwp returned non-zero (often harmless)"
-    fi
+    # NOTE: previously we ran /scripts/update_cwp here thinking it would
+    # "register" the new ioncube state with CWP. That was a bug —
+    # /scripts/update_cwp is the SAME thing that wipes /usr/local/ioncube
+    # during CWP's own rebuilds. Running it after our wire-up undid the
+    # work and left /opt/alt/php-fpmNN services trying to load missing
+    # loader files (real symptom on s4 today, 2026-05-27). REMOVED.
+    # CWP will run /scripts/update_cwp on its own schedule via cron and
+    # admin actions — we don't need to trigger it.
 
     ok "ioncube refresh done. Restarted ${restarted} FPM service(s)."
 }

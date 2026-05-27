@@ -84,6 +84,11 @@ Options:
                         latest loaders from ioncube.com, re-wires every
                         /opt/alt/php-fpmNN, restarts services. Run this
                         after CWP rebuilds (which wipe /usr/local/ioncube).
+  --disable-ext=LIST    Comma-list of extensions to disable post-build (.ini
+                        renamed to .ini.disabled, .so kept on disk).
+                        Default: mongodb,sourceguardian — both emit noisy
+                        deprecation/version warnings on every CLI invocation.
+                        Pass --disable-ext= (empty) to disable nothing.
   -h, --help            This text.
 
 Examples:
@@ -101,11 +106,14 @@ while [ $# -gt 0 ]; do
         --force-conf) FORCE_CONF=1; shift ;;
         --fix-dnf)    FIX_DNF_ONLY=1; shift ;;
         --refresh-ioncube) REFRESH_IONCUBE_ONLY=1; shift ;;
+        --disable-ext)     BH_DISABLE_EXTENSIONS="$2"; shift 2 ;;
+        --disable-ext=*)   BH_DISABLE_EXTENSIONS="${1#*=}"; shift ;;
         -h|--help)    usage; exit 0 ;;
         *) err "Unknown argument: $1"; usage; exit 2 ;;
     esac
 done
 export BH_FORCE_CONF="$FORCE_CONF"
+export BH_DISABLE_EXTENSIONS
 
 # -----------------------------------------------------------------------------
 # --fix-dnf shortcut

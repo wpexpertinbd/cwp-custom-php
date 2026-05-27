@@ -101,6 +101,9 @@ build_php() {
         bash "${CONFBASE}/php${PHPMAJOR}_external.conf" || warn "Some external modules failed (non-fatal)"
     fi
 
+    # ---- Auto-disable noisy extensions ----
+    disable_noisy_extensions "$FPMDIR"
+
     # ---- Restore preserved user pools ----
     restore_pools "$PHPMAJOR" "$FPMDIR"
 
@@ -317,6 +320,36 @@ install_systemd_service() {
     else
         warn "sapi/fpm/php-fpm.service missing — service not installed"
     fi
+}
+
+# Rename listed extensions' .ini -> .ini.disabled so PHP won't load them.
+# Default list (BH_DISABLE_EXTENSIONS): mongodb, sourceguardian.
+#  - mongodb: bundled mongodb-1.17/1.18 emits PHP 8.3+ deprecation warnings about
+#    missing string return type on __toString() interfaces.
+#  - sourceguardian: the SG loader installed by the bundled script doesn't always
+#    match the PHP point release's Zend API; produces noisy "requires Zend API
+#    420220829, you have 420230831" warnings on every CLI invocation.
+# .so files stay on disk — flip the .disabled suffix back to enable.
+disable_noisy_extensions() {
+    local FPMDIR="$1"
+    local inidir="${FPMDIR}/usr/php/php.d"
+    [ -d "$inidir" ] || return 0
+
+    local list="${BH_DISABLE_EXTENSIONS:-mongodb,sourceguardian}"
+    [ -z "$list" ] && return 0
+
+    log "Auto-disabling noisy extensions: $list  (override with BH_DISABLE_EXTENSIONS=)"
+    local ext
+    IFS=',' read -r -a exts <<< "$list"
+    for ext in "${exts[@]}"; do
+        ext="$(echo "$ext" | xargs)"          # trim
+        [ -z "$ext" ] && continue
+        local ini="${inidir}/${ext}.ini"
+        if [ -f "$ini" ]; then
+            mv "$ini" "${ini}.disabled"
+            ok "Disabled ${ext}.ini -> ${ext}.ini.disabled  (rename back to re-enable)"
+        fi
+    done
 }
 
 install_apache_proxy_module() {

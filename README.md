@@ -150,6 +150,7 @@ systemctl status php-fpm84
 | `--force-conf`        | Overwrite existing `/usr/local/cwp/.conf/php-fpm_conf/php{NN}*.conf` (EL8 only). |
 | `--refresh-ioncube`   | Run only the ioncube refresh and exit. |
 | `--fix-dnf`           | Run only the curl-trap repair and exit. |
+| `--disable-ext=LIST`  | Comma-list of extensions to disable post-build (`.ini` renamed to `.ini.disabled`, `.so` kept). Default: `mongodb,sourceguardian` — both emit noisy deprecation/version warnings every CLI invocation. Pass `--disable-ext=` (empty) to keep everything enabled. |
 | `-h`, `--help`        | Help. |
 
 ## Environment overrides

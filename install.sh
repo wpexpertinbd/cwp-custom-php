@@ -80,6 +80,8 @@ export REPO_ROOT
 . "${REPO_ROOT}/lib/postcheck.sh"
 # shellcheck source=lib/ioncube.sh
 . "${REPO_ROOT}/lib/ioncube.sh"
+# shellcheck source=lib/versions-merge.sh
+. "${REPO_ROOT}/lib/versions-merge.sh"
 
 # -----------------------------------------------------------------------------
 # Argument parsing
@@ -115,8 +117,10 @@ Options:
   --refresh-ioncube     Post-CWP-rebuild recovery. Auto-installs libzip if
                         CWP UI rebuild removed it, re-downloads latest ioncube
                         loaders from ioncube.com, re-wires every
-                        /opt/alt/php-fpmNN, restarts ALL custom php-fpm
-                        services. Run this after ANY CWP UI rebuild
+                        /opt/alt/php-fpmNN, MERGES our installed PHP versions
+                        back into versions.ini (so UI dropdown sees 8.4/8.5
+                        again after CWP wipes them), restarts ALL custom
+                        php-fpm services. Run this after ANY CWP UI rebuild
                         (PHP Version Switcher, PHP Selector, PHP-FPM
                         Selector, Rebuild Apache+PHP).
   --disable-ext=LIST    Comma-list of extensions to disable post-build (.ini
@@ -200,7 +204,17 @@ fi
 # the restored libs.
 if [ "$REFRESH_IONCUBE_ONLY" -eq 1 ]; then
     require_root
-    section "Post-CWP-rebuild recovery — libzip + ioncube + service restart"
+    section "Post-CWP-rebuild recovery — libzip + ioncube + versions.ini + service restart"
+
+    # 0. Determine EL major so versions.ini path resolves correctly
+    if [ -z "${BH_EL_MAJOR:-}" ]; then
+        if grep -qE 'release 9|AlmaLinux.*9|Rocky.*9|CentOS.*9|CloudLinux.*9' /etc/redhat-release 2>/dev/null; then
+            BH_EL_MAJOR=9
+        else
+            BH_EL_MAJOR=8
+        fi
+        export BH_EL_MAJOR
+    fi
 
     # 1. Restore libzip if CWP UI rebuild removed it
     check_libzip
@@ -208,6 +222,10 @@ if [ "$REFRESH_IONCUBE_ONLY" -eq 1 ]; then
     # 2. Restore ioncube loaders + re-wire every /opt/alt/php-fpmNN
     refresh_ioncube
     rc=$?
+
+    # 3. Re-merge our PHP-FPM versions into CWP's versions.ini so UI dropdown
+    #    keeps showing 8.4 / 8.5 (and any newer point releases for 8.2/8.3)
+    ensure_versions_ini || warn "versions.ini merge had issues — UI dropdown may need manual repair"
 
     # 3. Restart every detected /opt/alt/php-fpmNN service so the new libzip
     #    is loaded by running workers (without restart they keep the old

@@ -17,6 +17,37 @@
 set -euo pipefail
 
 # -----------------------------------------------------------------------------
+# Auto-logging: redirect all stdout/stderr to a log file AND keep terminal.
+# Default: /root/cwp-custom-php-<hostname>-<stamp>.log
+# Override via:  BH_LOG_FILE=/path/to/log.txt  bash install.sh ...
+# Disable via:   BH_LOG_FILE=/dev/null  bash install.sh ...
+# Or by passing --no-log (handled below before exec redirect).
+# -----------------------------------------------------------------------------
+if [ "${1:-}" = "--no-log" ]; then
+    shift
+    BH_LOG_FILE=/dev/null
+fi
+BH_RUN_STAMP="${BH_RUN_STAMP:-$(date +%Y%m%d-%H%M%S)}"
+BH_HOST_SHORT="${BH_HOST_SHORT:-$(hostname -s 2>/dev/null || echo host)}"
+BH_LOG_FILE="${BH_LOG_FILE:-/root/cwp-custom-php-${BH_HOST_SHORT}-${BH_RUN_STAMP}.log}"
+if [ "$BH_LOG_FILE" != "/dev/null" ]; then
+    mkdir -p "$(dirname "$BH_LOG_FILE")" 2>/dev/null || true
+    # tee with -a so we don't truncate on re-runs that share a stamp
+    exec > >(tee -a "$BH_LOG_FILE") 2>&1
+    printf '\n[install.sh] %s — logging to %s\n\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$BH_LOG_FILE"
+fi
+export BH_RUN_STAMP BH_LOG_FILE
+
+# Print log path at exit so user always knows where it lives
+_print_log_on_exit() {
+    local rc=$?
+    if [ "$BH_LOG_FILE" != "/dev/null" ]; then
+        printf '\n[install.sh] exit %s — log at: %s\n' "$rc" "$BH_LOG_FILE"
+    fi
+}
+trap _print_log_on_exit EXIT
+
+# -----------------------------------------------------------------------------
 # Locate REPO_ROOT: support both "bash install.sh" and "curl|bash"
 # -----------------------------------------------------------------------------
 if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
@@ -106,6 +137,9 @@ Options:
                         bin/. Makes "CWP system PHP" use our custom build.
                         Replaces the manual ln -sfn ritual. Example:
                         --system-php=8.3
+  --no-log              Disable automatic log file creation. Logs are written
+                        to /root/cwp-custom-php-<host>-<stamp>.log by default.
+                        Override path via BH_LOG_FILE env var.
   -h, --help            This text.
 
 Examples:

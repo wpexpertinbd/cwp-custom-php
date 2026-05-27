@@ -43,10 +43,11 @@ Run as root on each target server. Each version installs independently with atom
 ```bash
 for v in 8.5 8.4 8.3 8.2; do
   curl -fsSL https://raw.githubusercontent.com/wpexpertinbd/cwp-custom-php/main/install.sh \
-    | bash -s -- --php $v=latest --force-conf 2>&1 \
-    | tee /root/cwp-custom-php-$v-$(hostname -s)-$(date +%Y%m%d-%H%M%S).log
+    | bash -s -- --php $v=latest --force-conf
 done
 ```
+
+Logs are written automatically to `/root/cwp-custom-php-<hostname>-<timestamp>.log` per run. If a build fails, share that file. To disable auto-logging: append `--no-log` or `BH_LOG_FILE=/dev/null bash …`.
 
 This is **all you need on a fresh server**. After it completes:
 - PHP 8.2, 8.3, 8.4, 8.5 are built and visible in CWP Admin → PHP-FPM Selector

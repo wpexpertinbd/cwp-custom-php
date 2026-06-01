@@ -251,6 +251,7 @@ if [ "$REFRESH_IONCUBE_ONLY" -eq 1 ]; then
         fi
     done
 
+    prune_old_backups
     exit "$rc"
 fi
 
@@ -311,5 +312,9 @@ for spec in "${BUILT[@]}"; do
     major="${spec%%:*}"
     postcheck "$major"
 done
+
+# Retention: keep only the newest few backup snapshots so /root/cwp-php-backups
+# doesn't grow to GBs (each run stashes the prior ioncube dir ~90MB).
+prune_old_backups
 
 ok "All done. Backups: /root/cwp-php-backups/${BH_RUN_STAMP}/"

@@ -185,6 +185,21 @@ prune_alt_leftovers() {
     return 0
 }
 
+# Keep only the newest N timestamped snapshots in /root/cwp-php-backups. Each run
+# stashes the prior /usr/local/ioncube (~90MB) + pool configs there; without
+# retention they pile up to GBs across rebuilds. Only touches YYYYMMDD-HHMMSS dirs
+# (never stale-libs/ or other named subdirs). The most recent snapshots still cover
+# pool-config restore. Default keep=5.
+prune_old_backups() {
+    local keep="${1:-5}" base="/root/cwp-php-backups"
+    [ -d "$base" ] || return 0
+    ls -1dt "$base"/[0-9]*/ 2>/dev/null | tail -n +$((keep+1)) | while read -r d; do
+        [ -n "$d" ] && rm -rf "$d"
+    done
+    ok "backup retention: kept newest ${keep} snapshot(s) in ${base}"
+    return 0
+}
+
 # Atomic swap: the only blocking section of the build. Stop FPM, move dirs,
 # carry over user pool configs, restart FPM. ~2-5 sec downtime. If the new
 # install fails to start, auto-roll-back to the previous install.

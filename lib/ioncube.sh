@@ -127,6 +127,13 @@ refresh_ioncube() {
         php="${fpm}/usr/bin/php"
 
         if [ ! -f "$loader" ]; then
+            # No loader for this version (e.g. PHP 8.0 — ionCube never shipped one).
+            # Remove any LEFTOVER ioncube.ini so the FPM worker doesn't error on a
+            # zend_extension pointing at a missing .so ("Failed loading ...8.0.so").
+            if [ -f "$inifile" ]; then
+                rm -f "$inifile"
+                warn "  PHP ${dotver}: no loader — removed stale ${inifile}"
+            fi
             warn "  PHP ${dotver}: no loader available (${loader}) — skipping"
             continue
         fi

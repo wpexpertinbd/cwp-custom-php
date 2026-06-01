@@ -223,6 +223,11 @@ if [ "$REFRESH_IONCUBE_ONLY" -eq 1 ]; then
     refresh_ioncube
     rc=$?
 
+    # 2b. Clean stale build leftovers (.rollback/.failed/.bak) under /opt/alt —
+    #     they accumulate and break CWP's user-panel PHP Selector (blank version
+    #     dropdown + forEach-null). Safe: live php-fpmNN dirs have no such suffix.
+    prune_alt_leftovers
+
     # 3. Re-merge our PHP-FPM versions into CWP's versions.ini so UI dropdown
     #    keeps showing 8.4 / 8.5 (and any newer point releases for 8.2/8.3)
     ensure_versions_ini || warn "versions.ini merge had issues — UI dropdown may need manual repair"

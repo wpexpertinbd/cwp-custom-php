@@ -169,6 +169,22 @@ build_php() {
 # Helpers
 # -----------------------------------------------------------------------------
 
+# Remove stale build leftovers (.rollback.*/.failed.*/.bak.*) from /opt/alt.
+# These accumulate across builds and BREAK CWP's user-panel PHP Selector — it
+# scans /opt/alt/php* and chokes on the non-version directory names (blank
+# version dropdown + "Cannot read properties of null (reading 'forEach')").
+# Call ONLY after a successful swap (service verified active): the old install
+# is no longer needed and user pool configs were already carried over above.
+prune_alt_leftovers() {
+    local d n=0
+    for d in /opt/alt/php*.rollback.* /opt/alt/php*.failed.* /opt/alt/php*.bak.*; do
+        [ -d "$d" ] || continue
+        rm -rf "$d" && n=$((n+1))
+    done
+    [ "$n" -gt 0 ] && ok "pruned ${n} stale build-leftover dir(s) from /opt/alt (keeps CWP PHP Selector working)"
+    return 0
+}
+
 # Atomic swap: the only blocking section of the build. Stop FPM, move dirs,
 # carry over user pool configs, restart FPM. ~2-5 sec downtime. If the new
 # install fails to start, auto-roll-back to the previous install.
@@ -228,6 +244,7 @@ atomic_swap() {
     sleep 2
     if systemctl is-active --quiet "$SVC"; then
         ok "${SVC} active  — atomic swap complete"
+        prune_alt_leftovers   # clean stale .rollback/.failed/.bak dirs (break CWP PHP Selector)
         return 0
     fi
 

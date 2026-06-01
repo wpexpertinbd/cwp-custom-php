@@ -86,6 +86,42 @@ check_libzip() {
     else
         ok "libzip OK: $(rpm -q libzip)"
     fi
+    # A pre-1.7 libzip left in /usr/local/lib* shadows the (good) system one and
+    # makes any PHP built against the newer system libzip die with
+    # "undefined symbol: zip_compression_method_supported" the moment the zip
+    # extension is used (real incident: Blesta on php-fpm83, 2026-06-01).
+    # This is libzip-ONLY and safe (system libzip is an ABI-compatible superset);
+    # it does NOT touch other shadow libs (that's the dangerous --clean-shadow-libs).
+    heal_local_libzip
+}
+
+# Repoint a STALE /usr/local/lib*/libzip (missing zip_compression_method_supported,
+# i.e. < 1.7) to the system libzip, so PHP builds linked against the new symbols work.
+# Surgical: only libzip, only when local is genuinely older than system. Backs up.
+heal_local_libzip() {
+    command -v nm >/dev/null 2>&1 || return 0   # need nm to compare symbols; skip if absent
+    local sys c
+    for c in /usr/lib64/libzip.so.5 /lib64/libzip.so.5; do
+        [ -e "$c" ] && { sys=$(readlink -f "$c"); break; }
+    done
+    [ -n "$sys" ] || return 0
+    nm -D "$sys" 2>/dev/null | grep -q zip_compression_method_supported || return 0  # system must be new
+
+    local d f real
+    for d in /usr/local/lib64 /usr/local/lib; do
+        f="$d/libzip.so.5"
+        [ -e "$f" ] || continue
+        real=$(readlink -f "$f")
+        if ! nm -D "$real" 2>/dev/null | grep -q zip_compression_method_supported; then
+            warn "Stale libzip shadow at $f (pre-1.7) — repointing to system $sys"
+            mkdir -p /root/bh-libzip-backup
+            [ -f "$real" ] && mv -f "$real" /root/bh-libzip-backup/ 2>/dev/null
+            ln -sfn "$sys" "$d/libzip.so.5"
+            [ -e "$d/libzip.so" ] && ln -sfn "$sys" "$d/libzip.so"
+            ldconfig
+            ok "libzip shadow healed at $d -> $sys"
+        fi
+    done
 }
 
 # Scan /usr/local/lib*/ for libs that shadow system /usr/lib64 versions.

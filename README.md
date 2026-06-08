@@ -202,7 +202,7 @@ systemctl status php-fpm84
 | `--php X.Y[=VER]`     | PHP majors to install/update. Accepts `8.4`, `8.4=8.4.21`, `8.4=latest`, comma-list `8.3,8.4,8.5`. |
 | `--build-only`        | Skip GUI scaffolding deploy. Use for repeat builds. |
 | `--force-conf`        | Overwrite existing `/usr/local/cwp/.conf/php-fpm_conf/php{NN}*.conf` (EL8 only). |
-| `--refresh-ioncube`   | Run only the ioncube refresh and exit. |
+| `--refresh-ioncube`   | Post-CWP-rebuild recovery (libzip + ioncube + versions.ini merge + restart all custom php-fpm). **Also re-asserts the big-upload limit** (CWP rebuilds reset it to 64 MB) — honors `--big-upload` / `BH_BIG_UPLOAD_MB` (default 2048, `0` to skip). Run after ANY CWP UI rebuild. |
 | `--fix-dnf`           | Run only the curl-trap repair and exit. |
 | `--disable-ext=LIST`  | Comma-list of extensions to disable post-build (`.ini` renamed to `.ini.disabled`, `.so` kept). Default: `mongodb,sourceguardian` — both emit noisy deprecation/version warnings every CLI invocation. Pass `--disable-ext=` (empty) to keep everything enabled. |
 | `--big-upload=SIZE_MB`| After build, runs CWP's `/scripts/php_big_file_upload SIZE_MB all` — bumps `upload_max_filesize`, `post_max_size`, `memory_limit` (PHP) + `client_max_body_size` (Nginx) + `LimitRequestBody` (Apache) across **all** PHP versions on the box. Default: `2048` (2 GB) — high but matches BiswasHost filemanager use. Pass `--big-upload=0` to skip. |

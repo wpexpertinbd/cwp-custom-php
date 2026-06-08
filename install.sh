@@ -120,9 +120,11 @@ Options:
                         /opt/alt/php-fpmNN, MERGES our installed PHP versions
                         back into versions.ini (so UI dropdown sees 8.4/8.5
                         again after CWP wipes them), restarts ALL custom
-                        php-fpm services. Run this after ANY CWP UI rebuild
-                        (PHP Version Switcher, PHP Selector, PHP-FPM
-                        Selector, Rebuild Apache+PHP).
+                        php-fpm services, AND re-asserts the big-upload limit
+                        (CWP rebuilds reset it to 64 MB — honors
+                        --big-upload / BH_BIG_UPLOAD_MB, default 2048). Run
+                        this after ANY CWP UI rebuild (PHP Version Switcher,
+                        PHP Selector, PHP-FPM Selector, Rebuild Apache+PHP).
   --disable-ext=LIST    Comma-list of extensions to disable post-build (.ini
                         renamed to .ini.disabled, .so kept on disk).
                         Default: mongodb,sourceguardian — both emit noisy
@@ -250,6 +252,12 @@ if [ "$REFRESH_IONCUBE_ONLY" -eq 1 ]; then
             fi
         fi
     done
+
+    # Re-assert PHP/Nginx/Apache upload + memory limits — CWP UI rebuilds reset
+    # these back to the 64 MB default, and --refresh-ioncube IS the canonical
+    # post-rebuild command, so this is where the bump must self-heal fleet-wide.
+    # Honors BH_BIG_UPLOAD_MB / --big-upload (default 2048; set 0 to skip).
+    apply_big_upload "$BIG_UPLOAD_MB"
 
     prune_old_backups
     exit "$rc"

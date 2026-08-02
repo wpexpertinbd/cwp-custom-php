@@ -38,6 +38,32 @@ version_lt() {
 # php_short 8.4  -> 84;   php_short 8.3 -> 83
 php_short() { echo "${1//./}"; }
 
+# ── Build throttling ─────────────────────────────────────────────────
+# Compiling PHP is the single heaviest thing this script does. On a busy
+# shared-hosting box an unniced `make -j$(nproc)` will happily take every
+# core and starve the customers' php-fpm workers — which shows up as slow
+# sites and, behind Varnish, 503s. So:
+#   * leave 2 cores unused by default (still fast, keeps the panel usable)
+#   * run the compiler at nice 10 so ANY normal-priority process (php-fpm,
+#     mysqld, nginx) preempts it instantly
+#   * run it at ionice class 3 (idle) so the disk stays responsive
+# Override with --jobs N / BH_MAKE_JOBS, and BH_BUILD_NICE=0 to disable.
+build_jobs() {
+    if [ -n "${BH_MAKE_JOBS:-}" ]; then echo "$BH_MAKE_JOBS"; return; fi
+    local n=1
+    command -v nproc >/dev/null 2>&1 && n="$(nproc)"
+    if [ "$n" -gt 3 ]; then echo "$((n - 2))"; else echo 1; fi
+}
+
+# Prefix for the compile commands: nice + ionice when available.
+build_nice_prefix() {
+    [ "${BH_BUILD_NICE:-10}" = "0" ] && return 0
+    local p=""
+    command -v nice   >/dev/null 2>&1 && p="nice -n ${BH_BUILD_NICE:-10}"
+    command -v ionice >/dev/null 2>&1 && p="ionice -c3 $p"
+    echo "$p"
+}
+
 # Validate "8.2", "8.3", "8.4", "8.5" only
 valid_major() {
     case "$1" in

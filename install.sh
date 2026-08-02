@@ -107,6 +107,14 @@ Required:
                           --php 8.3=8.3.31,8.4=latest
 
 Options:
+  --jobs N              make -j parallelism. Default: (cores - 2), min 1.
+                        Compiling is the heaviest thing here; the default
+                        leaves headroom so customer php-fpm workers are not
+                        starved on a busy shared box (that shows up as slow
+                        sites / 503s behind Varnish). --jobs 0 is invalid.
+  --nice N              nice level for the compiler (default 10; 0 disables
+                        both nice and ionice). Builds also run ionice -c3
+                        (idle) so disk stays responsive.
   --build-only          Skip deploying GUI scaffolding (versions.ini, *.ini,
                         external_modules/, pre_run/). Use for repeat builds
                         when scaffolding is already in place.
@@ -169,6 +177,10 @@ while [ $# -gt 0 ]; do
         --refresh-ioncube) REFRESH_IONCUBE_ONLY=1; shift ;;
         --disable-ext)     BH_DISABLE_EXTENSIONS="$2"; shift 2 ;;
         --disable-ext=*)   BH_DISABLE_EXTENSIONS="${1#*=}"; shift ;;
+        --jobs)            BH_MAKE_JOBS="$2"; export BH_MAKE_JOBS; shift 2 ;;
+        --jobs=*)          BH_MAKE_JOBS="${1#*=}"; export BH_MAKE_JOBS; shift ;;
+        --nice)            BH_BUILD_NICE="$2"; export BH_BUILD_NICE; shift 2 ;;
+        --nice=*)          BH_BUILD_NICE="${1#*=}"; export BH_BUILD_NICE; shift ;;
         --big-upload)      BIG_UPLOAD_MB="$2"; shift 2 ;;
         --big-upload=*)    BIG_UPLOAD_MB="${1#*=}"; shift ;;
         --clean-shadow-libs) BH_CLEAN_SHADOW_LIBS=1; shift ;;

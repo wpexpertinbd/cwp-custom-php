@@ -70,12 +70,10 @@ build_php() {
     bash "${CONFBASE}/php${PHPMAJOR}.conf"
 
     # ---- Compile ----
-    log "Compiling PHP ${PHPVER} (this takes 5-15 minutes — tenants serve on EXISTING PHP during this window)"
-    if command -v nproc >/dev/null 2>&1; then
-        make -j"$(nproc)"
-    else
-        make
-    fi
+    BH_JOBS="$(build_jobs)"; BH_NICE="$(build_nice_prefix)"
+    log "Compiling PHP ${PHPVER} with -j${BH_JOBS} ${BH_NICE:+(throttled: ${BH_NICE})}"
+    log "  (5-15 min — tenants keep serving on the EXISTING PHP during this window)"
+    $BH_NICE make -j"$BH_JOBS"
 
     # ---- Install to STAGING via INSTALL_ROOT (so live install untouched) ----
     # PHP's Makefile uses $(INSTALL_ROOT) for staging installs in install-modules,
@@ -334,11 +332,7 @@ setup_isolated_curl() {
             --enable-shared \
             --enable-static
         if [ $? -ne 0 ]; then echo "FAIL_CONFIGURE"; exit 2; fi
-        if command -v nproc >/dev/null 2>&1; then
-            make -j"$(nproc)"
-        else
-            make
-        fi
+        $(build_nice_prefix) make -j"$(build_jobs)"
         if [ $? -ne 0 ]; then echo "FAIL_MAKE"; exit 2; fi
         make install
     )

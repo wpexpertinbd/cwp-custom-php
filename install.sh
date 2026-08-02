@@ -340,6 +340,17 @@ done
 # -----------------------------------------------------------------------------
 # Final report
 # -----------------------------------------------------------------------------
+# Advertise whatever we just built in CWP's PHP-FPM Selector.
+#
+# Runs AFTER the build loop on purpose: it reads each installed binary's real
+# PHP_VERSION, so it can only report versions that actually survived the build.
+# Running it earlier (or letting deploy_gui stamp a static file) is what used to
+# leave the UI offering 8.4.21 on a box running 8.4.24.
+# Skipped under --build-only, which by definition touches no GUI scaffolding.
+if [ "$BUILD_ONLY" -eq 0 ]; then
+    ensure_versions_ini || warn "versions.ini sync had issues — run 'install.sh --sync-versions' to retry"
+fi
+
 # ioncube auto-heal (stale-only) — safety net for CWP rebuilds wiping /usr/local/ioncube
 maybe_refresh_ioncube
 

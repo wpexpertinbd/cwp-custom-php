@@ -41,6 +41,31 @@ postcheck() {
         printf '  service    : %s%s%s\n' "$C_YEL" "${state:-unknown}" "$C_RST"
     fi
 
+    # Every pool's declared listen socket must actually exist.
+    #
+    # "service active" is NOT proof the pools came up: php-fpm happily starts
+    # with whatever pool files it finds, so a pool that got wiped by the tree
+    # swap leaves its socket missing while systemd still reports active. That is
+    # exactly how the Roundcube 502 on 2026-08-02 stayed invisible through a
+    # green build -- webmail's nginx route pointed at /run/rc-php83.sock and
+    # nothing ever recreated it.
+    local pool_dir="/opt/alt/php-fpm${short}/usr/etc/php-fpm.d"
+    if [ -d "$pool_dir" ]; then
+        local missing="" sock pf
+        for pf in "$pool_dir"/*.conf "$pool_dir"/users/*.conf; do
+            [ -f "$pf" ] || continue
+            sock=$(sed -nE 's/^[[:space:]]*listen[[:space:]]*=[[:space:]]*(\/[^;[:space:]]+).*/\1/p' "$pf" | head -1)
+            [ -n "$sock" ] || continue
+            [ -S "$sock" ] || missing="${missing} $(basename "$pf")->${sock}"
+        done
+        if [ -n "$missing" ]; then
+            printf '  pools      : %sMISSING SOCKET(S):%s%s\n' "$C_RED" "$C_RST" "$missing"
+            printf '               %sif roundcube.conf is listed, run: /root/rc-upgrade-cwp/rc-upgrade.sh pool%s\n' "$C_YEL" "$C_RST"
+        else
+            printf '  pools      : %sall declared sockets present%s\n' "$C_GRN" "$C_RST"
+        fi
+    fi
+
     # key extensions
     local mods; mods=$("$php" -m 2>/dev/null)
     printf '  modules    :'

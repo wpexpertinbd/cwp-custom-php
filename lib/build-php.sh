@@ -246,6 +246,33 @@ atomic_swap() {
         fi
     fi
 
+    # Carry over CUSTOM top-level pools (php-fpm.d/*.conf).
+    #
+    # Only users/*.conf was preserved above, so any pool written directly into
+    # php-fpm.d/ was destroyed by the tree swap. Real breakage on 2026-08-02:
+    # rc-upgrade-cwp gives Roundcube its own php-fpm83 pool
+    # (php-fpm.d/roundcube.conf -> /run/rc-php83.sock); rebuilding 8.3 removed it,
+    # the socket never came back, and webmail served 502 Bad Gateway on every box
+    # whose 8.3 we rebuilt. Nothing in the build output hinted at it.
+    #
+    # Skip the three files _write_fpm_scaffold regenerates; everything else in
+    # that directory was put there deliberately by an admin or another tool and
+    # must survive a point-release rebuild.
+    local rb_d="${ROLLBACK_DIR}/usr/etc/php-fpm.d"
+    if [ -d "$rb_d" ]; then
+        local carried=0 pc
+        for pc in "$rb_d"/*.conf; do
+            [ -f "$pc" ] || continue
+            case "$(basename "$pc")" in
+                cwpsvc.conf|users.conf|www.conf.default) continue ;;
+            esac
+            cp -a "$pc" "${FPMDIR}/usr/etc/php-fpm.d/" 2>/dev/null && carried=$((carried + 1))
+        done
+        if [ "$carried" -gt 0 ]; then
+            ok "Carried over ${carried} custom pool config(s) (e.g. roundcube.conf)"
+        fi
+    fi
+
     # Reload systemd in case the unit file just got installed/updated.
     systemctl daemon-reload
 

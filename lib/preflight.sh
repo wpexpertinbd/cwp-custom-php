@@ -322,16 +322,20 @@ fix_curl_ld_trap() {
 
 # Refuse to quarantine anything the distro owns or that lives in a system libdir.
 #
-# WHY THIS EXISTS (biswashost, 2026-08-02): the quarantine loop globbed
-# /usr/local/lib64/libzip.so*, but on that box /usr/local/lib64 resolves into
-# /usr/lib64, so the mv reached straight through and carried off RPM-owned
-# libzip.so.5. Every PHP-FPM pool plus the system PHP-CGI died with "error while
-# loading shared libraries: libzip.so.5" and my.biswashost.com (Blesta) went
-# down. Same class of mistake as chattr +i on an rpm-owned httpd conf.
+# WHY THIS EXISTS: quarantining a library the distro owns is unrecoverable
+# without a reinstall, and on 2026-08-02 a quarantine run on biswashost ended
+# with every PHP-FPM pool plus the system PHP-CGI dead ("error while loading
+# shared libraries: libzip.so.5") and Blesta down, needing dnf reinstall libzip.
 #
-# Two independent gates, because either alone can be fooled: realpath catches the
-# symlink alias even for unpackaged files, and rpm -qf catches a packaged file
-# that happens to sit outside the usual libdirs.
+# NOTE: the exact chain there was NOT a symlink alias -- /usr/local/lib64 is a
+# real directory on that box and the quarantined file was the genuine local
+# 1.5.x shadow. So this gate alone would not have prevented that outage; the
+# ldd verification + auto-revert in auto_quarantine_shadows() is what does.
+# This gate remains the cheap correctness floor (same standing rule as never
+# chattr +i an rpm-owned httpd conf: don't touch what the distro owns).
+#
+# Two independent checks, because either alone can be fooled: realpath catches a
+# symlinked path, and rpm -qf catches a packaged file outside the usual libdirs.
 _pf_safe_to_quarantine() {
     local f="$1" real
     real=$(readlink -f "$f" 2>/dev/null) || real="$f"

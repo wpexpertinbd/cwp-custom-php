@@ -181,6 +181,10 @@ check_shadow_libs() {
         warn "Cleanup (NOT auto-applied — these files may still be used by other software you"
         warn "installed manually). To quarantine all shadows and let RPM-installed libs take over:"
         warn ""
+        warn "  CAUTION: check 'readlink -f' and 'rpm -qf' on each file FIRST. If"
+        warn "  /usr/local/lib64 is a symlink into /usr/lib64, these mv commands"
+        warn "  will carry off RPM-owned system libraries and kill every PHP-FPM"
+        warn "  pool on the box. Prefer --clean-shadow-libs, which refuses those."
         warn "  mkdir -p /root/cwp-php-backups/stale-libs"
         warn "  mv /usr/local/lib64/{libzip,libcurl,libssl,libcrypto,libavif}.so* /root/cwp-php-backups/stale-libs/ 2>/dev/null"
         warn "  mv /usr/local/lib/{libzip,libcurl,libssl,libcrypto,libavif}.so*   /root/cwp-php-backups/stale-libs/ 2>/dev/null"
@@ -316,6 +320,35 @@ fix_curl_ld_trap() {
     fi
 }
 
+# Refuse to quarantine anything the distro owns or that lives in a system libdir.
+#
+# WHY THIS EXISTS (biswashost, 2026-08-02): the quarantine loop globbed
+# /usr/local/lib64/libzip.so*, but on that box /usr/local/lib64 resolves into
+# /usr/lib64, so the mv reached straight through and carried off RPM-owned
+# libzip.so.5. Every PHP-FPM pool plus the system PHP-CGI died with "error while
+# loading shared libraries: libzip.so.5" and my.biswashost.com (Blesta) went
+# down. Same class of mistake as chattr +i on an rpm-owned httpd conf.
+#
+# Two independent gates, because either alone can be fooled: realpath catches the
+# symlink alias even for unpackaged files, and rpm -qf catches a packaged file
+# that happens to sit outside the usual libdirs.
+_pf_safe_to_quarantine() {
+    local f="$1" real
+    real=$(readlink -f "$f" 2>/dev/null) || real="$f"
+
+    case "$real" in
+        /usr/lib64/*|/usr/lib/*|/lib64/*|/lib/*|/usr/bin/*|/bin/*|/usr/sbin/*|/sbin/*)
+            warn "  REFUSING $f -> resolves to $real (system path) — not ours to move"
+            return 1 ;;
+    esac
+
+    if command -v rpm >/dev/null 2>&1 && rpm -qf "$real" >/dev/null 2>&1; then
+        warn "  REFUSING $f -> owned by RPM $(rpm -qf --qf '%{NAME}' "$real" 2>/dev/null) — not ours to move"
+        return 1
+    fi
+    return 0
+}
+
 # Auto-quarantine: move shadow libs + their dependent binaries to backup dir.
 # Triggered by --clean-shadow-libs / BH_CLEAN_SHADOW_LIBS=1 when check_shadow_libs
 # detects something. Mirrors the manual commands we print otherwise.
@@ -331,6 +364,7 @@ auto_quarantine_shadows() {
     for lib in libzip libcurl libssl libcrypto libavif libxml2 libpng libjpeg libwebp libonig libsodium; do
         for f in /usr/local/lib64/${lib}.so* /usr/local/lib/${lib}.so*; do
             [ -e "$f" ] || continue
+            _pf_safe_to_quarantine "$f" || continue
             mv "$f" "$stale_dir/" 2>/dev/null && moved=$((moved + 1))
         done
     done
@@ -338,6 +372,35 @@ auto_quarantine_shadows() {
     if [ "$moved" -gt 0 ]; then
         ldconfig
         ok "Quarantined ${moved} shadow lib file(s) -> ${stale_dir}/"
+
+        # Prove the box still links before anyone restarts a service on top of
+        # this. Moving a lib that something real depended on must be caught HERE,
+        # not by a customer's site 500ing. If a PHP binary lost a library, put
+        # everything back and refuse to continue.
+        local broken="" b
+        for b in /opt/alt/php-fpm*/usr/bin/php /usr/local/bin/php-cgi /usr/local/bin/php; do
+            [ -x "$b" ] || continue
+            case "$b" in *.rollback.*|*.failed.*|*.bak.*) continue ;; esac
+            if ldd "$b" 2>/dev/null | grep -q 'not found'; then
+                broken="${broken} ${b}"
+            fi
+        done
+        if [ -n "$broken" ]; then
+            err "Quarantine broke library resolution for:${broken}"
+            warn "Restoring every quarantined lib and aborting the cleanup."
+            local r
+            for r in "$stale_dir"/*.so*; do
+                [ -e "$r" ] || continue
+                case "$r" in
+                    */libzip.so*|*/libcurl.so*|*/libssl.so*|*/libcrypto.so*|*/libavif.so*|\
+                    */libxml2.so*|*/libpng.so*|*/libjpeg.so*|*/libwebp.so*|*/libonig.so*|*/libsodium.so*)
+                        mv "$r" /usr/local/lib64/ 2>/dev/null || mv "$r" /usr/local/lib/ 2>/dev/null ;;
+                esac
+            done
+            ldconfig
+            die "Shadow-lib cleanup reverted — nothing was left broken. Investigate manually before retrying."
+        fi
+        ok "Verified: all PHP binaries still resolve their libraries"
     fi
 
     # Binaries in /usr/local/bin that we know commonly depend on shadow libs.
@@ -360,6 +423,7 @@ auto_quarantine_shadows() {
                /usr/local/bin/zipcmp /usr/local/bin/zipmerge /usr/local/bin/ziptool
     do
         [ -x "$bin" ] || continue
+        _pf_safe_to_quarantine "$bin" || continue
         # Only move if ldd shows the binary is BROKEN ("not found") OR
         # explicitly links into /usr/local/lib. Healthy binaries that
         # link cleanly to /lib64/* are left alone.

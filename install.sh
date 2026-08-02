@@ -91,6 +91,7 @@ PHP_SPECS=""            # comma list: "8.3" or "8.4=8.4.21"
 BUILD_ONLY=0
 FIX_DNF_ONLY=0
 REFRESH_IONCUBE_ONLY=0
+SYNC_VERSIONS_ONLY=0
 FORCE_CONF=0
 BIG_UPLOAD_MB="${BH_BIG_UPLOAD_MB:-2048}"   # default 2048 MB; set 0 to skip
 
@@ -120,6 +121,12 @@ Options:
                         when scaffolding is already in place.
   --force-conf          Overwrite existing /usr/local/cwp/.conf/php-fpm_conf/
                         php{NN}*.conf files with the repo copies (backed up).
+  --sync-versions       Refresh CWP's PHP-FPM Selector version list and exit.
+                        No build, no restart. Merges what is installed on this
+                        box + the newest releases published by php.net into the
+                        live versions.ini. Additive only: never removes an entry
+                        CWP shipped, never downgrades a branch. Safe to re-run,
+                        and the right command after any CWP panel update.
   --fix-dnf             Run ONLY the curl-ld.so trap repair and exit. Useful
                         if previous manual curl-from-source install broke
                         dnf/yum/nginx repo.
@@ -175,6 +182,7 @@ while [ $# -gt 0 ]; do
         --force-conf) FORCE_CONF=1; shift ;;
         --fix-dnf)    FIX_DNF_ONLY=1; shift ;;
         --refresh-ioncube) REFRESH_IONCUBE_ONLY=1; shift ;;
+        --sync-versions)   SYNC_VERSIONS_ONLY=1; shift ;;
         --disable-ext)     BH_DISABLE_EXTENSIONS="$2"; shift 2 ;;
         --disable-ext=*)   BH_DISABLE_EXTENSIONS="${1#*=}"; shift ;;
         --jobs)            BH_MAKE_JOBS="$2"; export BH_MAKE_JOBS; shift 2 ;;
@@ -193,6 +201,20 @@ done
 export BH_FORCE_CONF="$FORCE_CONF"
 export BH_DISABLE_EXTENSIONS
 export BH_CLEAN_SHADOW_LIBS="${BH_CLEAN_SHADOW_LIBS:-0}"
+
+# -----------------------------------------------------------------------------
+# --sync-versions shortcut (standalone, no build, no service restart).
+#
+# Replaces the manual chore of: download CWP's current versions.ini, look up the
+# newest 8.4 / 8.5 by hand, paste them in, re-upload to every server. Reads the
+# box's live file, folds in what is actually installed plus what php.net has
+# published, and writes it back. Purely additive and safe to re-run.
+# -----------------------------------------------------------------------------
+if [ "$SYNC_VERSIONS_ONLY" -eq 1 ]; then
+    require_root
+    ensure_versions_ini
+    exit 0
+fi
 
 # -----------------------------------------------------------------------------
 # --fix-dnf shortcut

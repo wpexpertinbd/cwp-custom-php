@@ -14,12 +14,20 @@ deploy_gui() {
     [ -d "$repo_sel" ] || die "Repo selector dir missing: $repo_sel"
     [ -d "$CWP_SEL"   ] || die "CWP selector dir missing: $CWP_SEL"
 
-    # versions.ini (shared — same content for EL8/EL9 modern PHPs)
-    if [ -f "${repo_sel}/versions.ini" ]; then
-        backup_file "${CWP_SEL}/versions.ini"
-        install -m 0644 "${repo_sel}/versions.ini" "${CWP_SEL}/versions.ini"
-        ok "versions.ini deployed"
-    fi
+    # versions.ini — deliberately NOT deployed here.
+    #
+    # This used to be a blind `install -m 0644 repo/versions.ini -> live`, which
+    # overwrote CWP's live catalogue with our repo's FROZEN snapshot. Because that
+    # snapshot ages the moment it is committed, every single build silently
+    # DOWNGRADED the version list for *every* branch — not just the 8.4/8.5 we
+    # manage. Real damage seen on biswashost: live had 8.2.33/8.3.33/8.4.24/8.5.9,
+    # a rebuild stamped it back to 8.2.31/8.3.31/8.4.21/8.5.6, so the admin could
+    # no longer pick the releases that were actually installed.
+    #
+    # versions.ini is now owned exclusively by ensure_versions_ini() (see
+    # lib/versions-merge.sh), which is ADDITIVE: it inserts the version we truly
+    # built and never removes a line CWP shipped.
+    log "versions.ini: left to ensure_versions_ini() (additive merge, never overwrites)"
 
     # N.ini — prefer EL-specific variant (8.4.el8.ini / 8.4.el9.ini), fall back to 8.4.ini
     local ini_src=""

@@ -72,15 +72,30 @@ resolve_php_version() {
         local json
         if json=$(curl -fsSL --max-time 15 "$url" 2>/dev/null); then
             local ver
-            ver=$(echo "$json" | grep -oE '"version":"[0-9]+\.[0-9]+\.[0-9]+"' | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
-            if [ -n "$ver" ]; then echo "$ver"; return 0; fi
+            # php.net returns the version as the TOP-LEVEL JSON KEY, e.g.
+            #   {"8.4.24":{"announcement":true,"tags":["security"],...}}
+            # There is NO "version":"x.y.z" field — the old parser looked for
+            # one, always got nothing, and silently fell through to the
+            # hard-coded list below. Result: every `--php X=latest` install
+            # quietly built a STALE release (the whole fleet ended up pinned to
+            # the fallback versions for months). Parse the key instead.
+            ver=$(printf '%s' "$json" | sed -nE 's/^\{"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/p' | head -1)
+            # belt-and-braces: first bare quoted version matching this major
+            [ -n "$ver" ] || ver=$(printf '%s' "$json" \
+                | grep -oE "\"${major//./\\.}\.[0-9]+\"" | head -1 | tr -d '"')
+            # never accept an answer from the wrong branch
+            case "$ver" in
+                "${major}."*) echo "$ver"; return 0 ;;
+                *) [ -n "$ver" ] && warn "php.net returned '$ver' for branch $major — ignoring" ;;
+            esac
         fi
-        # Fallback hard-coded defaults (kept current as of repo last update)
+        warn "could not resolve latest $major from php.net — using built-in fallback (may be outdated)"
+        # Fallback hard-coded defaults (verified 2026-08-02; keep in sync)
         case "$major" in
-            8.2) echo "8.2.31" ;;
-            8.3) echo "8.3.31" ;;
-            8.4) echo "8.4.21" ;;
-            8.5) echo "8.5.6"  ;;
+            8.2) echo "8.2.33" ;;
+            8.3) echo "8.3.33" ;;
+            8.4) echo "8.4.24" ;;
+            8.5) echo "8.5.9"  ;;
         esac
     else
         echo "$hint"

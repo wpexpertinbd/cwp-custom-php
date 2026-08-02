@@ -5,6 +5,7 @@
 #   bash install.sh --php 8.4
 #   bash install.sh --php 8.4=8.4.21
 #   bash install.sh --php 8.4=latest
+#   bash install.sh --php 8.2=latest,8.3=latest,8.4=latest,8.5=latest   # all four
 #   bash install.sh --php 8.3,8.4,8.5
 #   bash install.sh --php 8.4 --build-only      # skip GUI scaffolding deploy
 #   bash install.sh --fix-dnf                    # only repair /etc/ld.so.conf.d/curl-local.conf trap
@@ -282,7 +283,7 @@ for spec in "${SPECS[@]}"; do
     [ "$hint" = "$spec" ] && hint=""      # no '=' means no hint
 
     if ! valid_major "$major"; then
-        err "Unsupported PHP major: $major  (allowed: 8.3, 8.4, 8.5)"
+        err "Unsupported PHP major: $major  (allowed: 8.2, 8.3, 8.4, 8.5)"
         exit 2
     fi
 

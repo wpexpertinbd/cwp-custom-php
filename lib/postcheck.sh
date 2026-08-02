@@ -41,6 +41,22 @@ postcheck() {
         printf '  service    : %s%s%s\n' "$C_YEL" "${state:-unknown}" "$C_RST"
     fi
 
+    # Startup warnings — catches wrong-API / duplicate extensions.
+    #
+    # A module built against a different PHP branch loads with
+    # "Unable to initialize module / module API=NNN" and is then simply ABSENT,
+    # while php -v still exits 0 and the build looks green. That is how s1/s3
+    # ended up running 8.2 with an 8.3-built uploadprogress.so on 2026-08-02
+    # (stale build tree in /usr/local/src reused by the extension script).
+    # Surface it here rather than waiting to trip over it later.
+    local startup_warn; startup_warn=$("$php" -v 2>&1 | grep -c '^PHP Warning' || true)
+    if [ "${startup_warn:-0}" -gt 0 ]; then
+        printf '  startup    : %s%s warning(s)%s\n' "$C_YEL" "$startup_warn" "$C_RST"
+        "$php" -v 2>&1 | grep '^PHP Warning' | head -3 | sed 's/^/               /'
+    else
+        printf '  startup    : %sclean%s\n' "$C_GRN" "$C_RST"
+    fi
+
     # Every pool's declared listen socket must actually exist.
     #
     # "service active" is NOT proof the pools came up: php-fpm happily starts

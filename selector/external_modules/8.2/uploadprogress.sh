@@ -1,12 +1,13 @@
 #!/bin/bash
 if [ -e "/opt/alt/php-fpm82/usr/bin/php-config" ];then
 cd /usr/local/src
-rm -rf uploadprogress
+rm -rf uploadprogress* uploadprogress.tgz
 curl https://pecl.php.net/get/uploadprogress -o uploadprogress.tgz
 tar -xf uploadprogress.tgz
 cd uploadprogress-*/
 /opt/alt/php-fpm82/usr/bin/phpize
 ./configure --with-php-config=/opt/alt/php-fpm82/usr/bin/php-config
+make clean >/dev/null 2>&1 || true
 make
 make install
 

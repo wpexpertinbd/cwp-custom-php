@@ -7,7 +7,7 @@ systemctl start redis
 systemctl enable redis
 rm -rf redis-*
 rm -rf redis*
-curl https://pecl.php.net/get/redis -o redis.tgz
+curl -fsSL --retry 3 --retry-delay 5 https://pecl.php.net/get/redis -o redis.tgz || { echo "ERROR: download failed: https://pecl.php.net/get/redis"; exit 1; }
 tar -xf redis.tgz
 cd redis-*/
 /opt/alt/php-fpm82/usr/bin/phpize

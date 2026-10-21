@@ -204,7 +204,7 @@ systemctl status php-fpm84
 | `--force-conf`        | Overwrite existing `/usr/local/cwp/.conf/php-fpm_conf/php{NN}*.conf` (EL8 only). |
 | `--refresh-ioncube`   | Post-CWP-rebuild recovery (libzip + ioncube + versions.ini merge + restart all custom php-fpm). **Also re-asserts the big-upload limit** (CWP rebuilds reset it to 64 MB) — honors `--big-upload` / `BH_BIG_UPLOAD_MB` (default 2048, `0` to skip). Run after ANY CWP UI rebuild. |
 | `--fix-dnf`           | Run only the curl-trap repair and exit. |
-| `--disable-ext=LIST`  | Comma-list of extensions to disable post-build (`.ini` renamed to `.ini.disabled`, `.so` kept). Default: `mongodb,sourceguardian` — both emit noisy deprecation/version warnings every CLI invocation. Pass `--disable-ext=` (empty) to keep everything enabled. |
+| `--disable-ext=LIST`  | Comma-list of extensions to disable post-build (`.ini` renamed to `.ini.disabled`, `.so` kept). Default: `mongodb,sourceguardian` — both emit noisy deprecation/version warnings every CLI invocation. An extension the previous install had enabled stays enabled. Pass `--disable-ext=` (empty) to keep everything enabled. |
 | `--big-upload=SIZE_MB`| After build, runs CWP's `/scripts/php_big_file_upload SIZE_MB all` — bumps `upload_max_filesize`, `post_max_size`, `memory_limit` (PHP) + `client_max_body_size` (Nginx) + `LimitRequestBody` (Apache) across **all** PHP versions on the box. Default: `2048` (2 GB) — high but matches BiswasHost filemanager use. Pass `--big-upload=0` to skip. |
 | `--clean-shadow-libs` | ⚠️ **Advanced — opt-in only**. Quarantines shadow libs (`/usr/local/lib*/`) and a narrow allowlist of non-PHP binaries (`/usr/local/bin/curl`, `pcre2grep`, `zipcmp`, etc.) to `/root/cwp-php-backups/stale-libs/`. **Skips** `/usr/local/bin/{php,php-cgi,phpdbg,lsphp}` because those are CWP system PHP binaries (use CWP's PHP Version Switcher UI to rebuild them, not this flag). Default is warn-only — recommended unless you have a specific known conflict. |
 | `--system-php=X.Y`    | ⚠️ **Advanced — opt-in only**. After build, symlink `/usr/local/bin/{php,php-cgi,phpdbg,php-config,phpize}` → `/opt/alt/php-fpmXY/usr/bin/`. Bypasses CWP's "PHP Version Switcher" UI — the dashboard will show whatever the symlink resolves to. Replaces the manual `ln -sfn` ritual. Example: `--system-php=8.3`. |
@@ -218,6 +218,8 @@ systemctl status php-fpm84
 | `BH_BIG_UPLOAD_MB`   | Default size (MB) for `/scripts/php_big_file_upload`. Default `2048`. Set `0` to skip. |
 | `BH_REPO_URL`        | Override the curl\|bash clone source (defaults to this repo). |
 | `BH_REPO_BRANCH`     | Branch for curl\|bash mode (default `main`). |
+| `BH_ALLOW_EXTERNAL_PCRE=1` | Build even though the existing EL8 `php{NN}.conf` has `--with-external-pcre` (links the system PCRE2 10.32). Default: refuse; the fix is `--force-conf`. |
+| `BH_KEEP_ROLLBACKS`  | How many of the newest backup snapshots keep the whole previous install (`rollback/`, ~150-250 MB per PHP version). Default `2`. |
 
 ## EL8 vs EL9 (auto-detected)
 
@@ -239,6 +241,8 @@ Every run creates `/root/cwp-php-backups/<YYYYMMDD-HHMMSS>/` with:
 - Stashed `/opt/alt/php-fpmNN/usr/etc/php-fpm.d/users/*.conf` before rebuild
 - Previous `/usr/local/ioncube/` if it was refreshed
 - Renamed `curl-local.conf.disabled.<stamp>` if the trap was triggered
+- `rollback/php-fpmNN/` — the **whole previous install** (its `php.ini`, `php.d/`, extensions), moved out of `/opt/alt` at the end of a successful run and named in the final summary. A failed run leaves it at `/opt/alt/php-fpmNN.rollback.<stamp>` and says so on exit.
+- Every `php.d/*.ini` the installer edited or removed (static-module loaders)
 
 Safe to delete after a successful build.
 
@@ -253,6 +257,7 @@ cwp-custom-php/
 │   ├── deploy-gui.sh                             # versions.ini, N.ini, external_modules/, pre_run/
 │   ├── deploy-conf.sh                            # /usr/local/cwp/.conf/php-fpm_conf/ seeding (EL8 only)
 │   ├── build-php.sh                              # unified builder with EL-aware profiles
+│   ├── carry-config.sh                           # carries php.ini values + php.d/*.ini across a rebuild
 │   ├── ioncube.sh                                # refresh loaders + stale-check + auto-heal
 │   └── postcheck.sh                              # verification table
 ├── selector/
@@ -275,6 +280,18 @@ cwp-custom-php/
 **ioncube missing after CWP rebuild** — `bash install.sh --refresh-ioncube`. This is the canonical fix.
 
 **Build seems to hang** — that's normal. `make -j$(nproc)` on PHP source takes 5-15 minutes depending on CPU.
+
+## Changelog
+
+### 2026-10-21 — a rebuild never loses the existing configuration
+Rebuilding the fleet to the CVE-2026-109618/109619 releases (8.2.35 / 8.3.36 / 8.4.27 / 8.5.12) showed every atomic swap installing a **stock `php.ini` and an empty `php.d/`**: `disabled_function.ini` (`disable_functions = exec, system, …`), `zz-opcache-tuned.ini`, `zz-bh-cve-2026-109619.ini` and the CWP big-upload values were silently dropped, and a site broke on `memory_limit = 128M`.
+- **php.ini carry-over** — every key whose value in the previous install differs from the new stock file (`memory_limit`, `upload_max_filesize`, `post_max_size`, `max_input_time`, `max_execution_time`, `disable_functions`, `max_input_vars`, …) is written into the new `php.ini` before the first start, and each one is logged. `[PATH=]`/`[HOST=]` sections are copied verbatim to the end of the file. `extension=`/`zend_extension=` lines from the old `php.ini` go to `php.d/00-carried-from-php-ini.ini` once the external modules are built, if the new build has that module and does not already load it.
+- **php.d carry-over** — every settings-only `php.d/*.ini` (no `extension=` line) is copied before the first start. After the external modules are built, old loader files the new build did not recreate are copied when their `.so` exists for the new build; a missing `.so` is reported loudly instead of dropped. When the new build recreated a file under the same name (e.g. `imagick.ini`, `opcache.ini`), the old file's extra settings are appended to it, so the old values win. An old `<ext>.ini.disabled` keeps `<ext>` disabled.
+- **Rollback really runs** — a failed `systemctl start` after the swap no longer ends the run under `set -e` before the automatic rollback (this bug was there before this change).
+- **No `.ini` for compiled-in modules** — loaders for modules `php -n -m` already lists (8.3's `mbstring`, built-in `opcache`) are commented out, or the file removed if nothing else is left in it (backed up first). The repo's `8.3/mbstring.sh` now does nothing when mbstring is built in.
+- **`--with-external-pcre` gate (EL8)** — an existing `php{NN}.conf` with that flag (links the system PCRE2 10.32) now stops the run before anything is built. Fix with `--force-conf`; override with `BH_ALLOW_EXTERNAL_PCRE=1`.
+- **Downloads fail closed** — every `curl` in `external_modules/` is `curl -fsSL --retry 3`, every `wget` has `--tries=3`, and a failed download stops that module with `ERROR: download failed: <url>` instead of untarring an HTML error page.
+- **Rollback kept** — the previous install stays at `/opt/alt/php-fpmNN.rollback.<stamp>` until the whole run succeeds, then moves to `/root/cwp-php-backups/<stamp>/rollback/` (out of `/opt/alt`, so CWP's PHP Selector keeps working) and is named in the final summary.
 
 ## Source
 

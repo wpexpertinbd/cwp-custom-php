@@ -1,7 +1,7 @@
 #!/bin/bash
 if [ -e "/opt/alt/php-fpm82/usr/bin/php-config" ];then
 cd /usr/local/src
-wget https://launchpad.net/libmemcached/1.0/1.0.18/+download/libmemcached-1.0.18.tar.gz
+wget --tries=3 https://launchpad.net/libmemcached/1.0/1.0.18/+download/libmemcached-1.0.18.tar.gz || { echo "ERROR: download failed: https://launchpad.net/libmemcached/1.0/1.0.18/+download/libmemcached-1.0.18.tar.gz"; exit 1; }
 tar -zxvf libmemcached-1.0.18.tar.gz
 cd libmemcached-1.0.18
 ./configure
@@ -11,7 +11,7 @@ systemctl enable memcached
 systemctl restart memcached
 cd /usr/local/src
 rm -rf memcached*
-curl https://pecl.php.net/get/memcached -o memcached.tgz
+curl -fsSL --retry 3 --retry-delay 5 https://pecl.php.net/get/memcached -o memcached.tgz || { echo "ERROR: download failed: https://pecl.php.net/get/memcached"; exit 1; }
 tar -xf memcached.tgz
 cd memcached-*/
 /opt/alt/php-fpm82/usr/bin/phpize

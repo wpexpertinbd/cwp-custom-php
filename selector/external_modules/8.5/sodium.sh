@@ -42,7 +42,7 @@ echo "WARNING: PHP sodium extension missing — attempting PECL build."
 cd /usr/local/src
 rm -rf libsodium-* libsodium.tgz
 
-curl -L https://pecl.php.net/get/libsodium -o libsodium.tgz
+curl -fsSL --retry 3 --retry-delay 5 https://pecl.php.net/get/libsodium -o libsodium.tgz || { echo "ERROR: download failed: https://pecl.php.net/get/libsodium"; exit 1; }
 tar zxf libsodium.tgz
 cd libsodium-*/
 

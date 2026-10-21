@@ -5,7 +5,7 @@ systemctl enable memcached
 systemctl restart memcached
 cd /usr/local/src
 rm -rf memcache*
-curl https://pecl.php.net/get/memcache-8.0.tgz -o memcache.tgz
+curl -fsSL --retry 3 --retry-delay 5 https://pecl.php.net/get/memcache-8.0.tgz -o memcache.tgz || { echo "ERROR: download failed: https://pecl.php.net/get/memcache-8.0.tgz"; exit 1; }
 tar -xf memcache.tgz
 cd memcache-*/
 /opt/alt/php-fpm82/usr/bin/phpize

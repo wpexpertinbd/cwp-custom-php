@@ -2,7 +2,7 @@
 
 cd /usr/local/src
 rm -rf xdebug*
-wget http://static.cdn-cwp.com/files/php/pecl/xdebug.tgz
+wget --tries=3 http://static.cdn-cwp.com/files/php/pecl/xdebug.tgz || { echo "ERROR: download failed: http://static.cdn-cwp.com/files/php/pecl/xdebug.tgz"; exit 1; }
 tar zxf xdebug.tgz
 cd xdebug-*/
 /opt/alt/php-fpm83/usr/bin/phpize

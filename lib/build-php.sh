@@ -16,6 +16,7 @@
 #   /usr/local/cwp/.conf/php-fpm_conf/php{NN}{,_pre,_external}.conf
 
 . "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/carry-config.sh"
 
 build_php() {
     local PHPMAJOR="${1:?PHPMAJOR required}"   # 83 / 84 / 85
@@ -30,6 +31,9 @@ build_php() {
 
     [ -f "${CONFBASE}/php${PHPMAJOR}.conf" ] || \
         die "Missing build recipe: ${CONFBASE}/php${PHPMAJOR}.conf  (run deploy-conf first)"
+
+    # ---- Refuse a recipe that links the OS PCRE2 (before anything is touched) ----
+    check_external_pcre "${CONFBASE}/php${PHPMAJOR}.conf"
 
     # ---- Build dependencies (idempotent, safe while live) ----
     install_build_deps
@@ -141,12 +145,20 @@ build_php() {
         section "Building external modules (degraded window — imagick/redis/etc. unavailable)"
         log "Sites using these extensions will error for ~3-5 min until each module finishes"
         bash "${CONFBASE}/php${PHPMAJOR}_external.conf" || warn "Some external modules failed (non-fatal)"
-        ok "External modules built; restarting FPM to load them"
-        systemctl restart "php-fpm${PHPMAJOR}" || warn "php-fpm${PHPMAJOR} did not restart cleanly"
+        ok "External modules built"
     fi
 
-    # ---- Auto-disable noisy extensions ----
-    disable_noisy_extensions "$FPMDIR"
+    # ---- php.d: drop loaders for compiled-in modules, then carry over the old
+    #      install's extension .ini files the new build did not recreate ----
+    prune_static_extension_inis "$FPMDIR" \
+        || warn "static-module loader check failed — check php -m for 'already loaded' warnings"
+    carry_over_extension_inis "${FPMDIR}.rollback.${BH_RUN_STAMP}" "$FPMDIR" \
+        || warn "extension .ini carry-over failed — compare php.d with ${FPMDIR}.rollback.${BH_RUN_STAMP} by hand"
+    log "Restarting php-fpm${PHPMAJOR} to load the extensions"
+    systemctl restart "php-fpm${PHPMAJOR}" || warn "php-fpm${PHPMAJOR} did not restart cleanly"
+
+    # ---- Auto-disable noisy extensions (not ones the previous install loaded) ----
+    disable_noisy_extensions "$FPMDIR" "${FPMDIR}.rollback.${BH_RUN_STAMP}"
 
     # ---- Monit integration ----
     integrate_monit "$PHPMAJOR"
@@ -157,7 +169,7 @@ build_php() {
     # ---- Final restart so all extension changes take effect ----
     systemctl restart "php-fpm${PHPMAJOR}" || warn "final restart had issues"
 
-    # ---- Cleanup staging (rollback dir kept) ----
+    # ---- Cleanup staging (rollback dir kept until the whole run succeeds) ----
     rm -rf "$STAGE_ROOT"
     rm -rf /usr/local/src/php-build /usr/local/src/build-dir
     ok "PHP ${PHPVER} (php-fpm${PHPMAJOR}) build finished"
@@ -167,19 +179,63 @@ build_php() {
 # Helpers
 # -----------------------------------------------------------------------------
 
+# A recipe CWP's GUI generated on EL8 can carry --with-external-pcre, which
+# links PHP against the OS PCRE2 (10.32 on EL8, years older than the copy PHP
+# bundles). deploy_conf keeps an existing recipe unless --force-conf, so a box
+# where someone once clicked Build in the CWP GUI keeps that flag on every
+# rebuild without a word. Refuse on EL8 before anything is downloaded or built.
+check_external_pcre() {
+    local conf="$1"
+    grep -q -- '--with-external-pcre' "$conf" 2>/dev/null || return 0
+    if [ "${BH_EL_MAJOR:-8}" -eq 9 ]; then
+        log "$(basename "$conf") uses --with-external-pcre (expected on EL9: current system PCRE2)"
+        return 0
+    fi
+    warn "!!! ${conf} contains --with-external-pcre"
+    warn "!!! PHP would link the EL8 system PCRE2 (10.32) instead of its bundled PCRE2."
+    if [ "${BH_ALLOW_EXTERNAL_PCRE:-0}" = "1" ]; then
+        warn "!!! BH_ALLOW_EXTERNAL_PCRE=1 — building with the system PCRE2 anyway"
+        return 0
+    fi
+    die "Refusing to build with --with-external-pcre on EL8. Re-run with --force-conf (without --build-only) to replace ${conf} with the repo recipe (the old file is backed up), or set BH_ALLOW_EXTERNAL_PCRE=1 to build with the system PCRE2 anyway."
+}
+
 # Remove stale build leftovers (.rollback.*/.failed.*/.bak.*) from /opt/alt.
 # These accumulate across builds and BREAK CWP's user-panel PHP Selector — it
 # scans /opt/alt/php* and chokes on the non-version directory names (blank
 # version dropdown + "Cannot read properties of null (reading 'forEach')").
-# Call ONLY after a successful swap (service verified active): the old install
-# is no longer needed and user pool configs were already carried over above.
+# Call ONLY at the END of a successful run (install.sh does): until then the
+# .rollback dir is the only copy of the old install's php.ini / php.d and is
+# read by carry_over_extension_inis after the external modules are built.
+#
+# .rollback.<stamp> dirs are MOVED (not deleted) to
+# /root/cwp-php-backups/<stamp>/rollback/php-fpmNN — out of /opt/alt so the
+# Selector works, but still there to restore from or diff against. Each move is
+# recorded in BH_ROLLBACK_KEPT for the final summary. .failed/.bak are deleted.
+BH_ROLLBACK_KEPT=()
 prune_alt_leftovers() {
-    local d n=0
-    for d in /opt/alt/php*.rollback.* /opt/alt/php*.failed.* /opt/alt/php*.bak.*; do
+    local d n=0 stamp dst
+    for d in /opt/alt/php*.rollback.*; do
+        [ -d "$d" ] || continue
+        stamp="${d##*.rollback.}"
+        dst="/root/cwp-php-backups/${stamp}/rollback/$(basename "${d%.rollback.*}")"
+        if [ -e "$dst" ]; then
+            dst="${dst}.$(date +%s)"
+        fi
+        mkdir -p "$(dirname "$dst")"
+        if mv "$d" "$dst"; then
+            ok "previous install moved out of /opt/alt: ${d} -> ${dst}"
+            BH_ROLLBACK_KEPT+=("$dst")
+            n=$((n+1))
+        else
+            warn "could not move ${d} out of /opt/alt — CWP PHP Selector may show a blank version list until it is moved"
+        fi
+    done
+    for d in /opt/alt/php*.failed.* /opt/alt/php*.bak.*; do
         [ -d "$d" ] || continue
         rm -rf "$d" && n=$((n+1))
     done
-    [ "$n" -gt 0 ] && ok "pruned ${n} stale build-leftover dir(s) from /opt/alt (keeps CWP PHP Selector working)"
+    [ "$n" -gt 0 ] && ok "cleared ${n} build-leftover dir(s) from /opt/alt (keeps CWP PHP Selector working)"
     return 0
 }
 
@@ -188,13 +244,21 @@ prune_alt_leftovers() {
 # retention they pile up to GBs across rebuilds. Only touches YYYYMMDD-HHMMSS dirs
 # (never stale-libs/ or other named subdirs). The most recent snapshots still cover
 # pool-config restore. Default keep=5.
+# Whole previous installs (rollback/, ~150-250MB per PHP version) are kept in the
+# newest BH_KEEP_ROLLBACKS snapshots only (default 2).
 prune_old_backups() {
     local keep="${1:-5}" base="/root/cwp-php-backups"
+    local keep_rb="${BH_KEEP_ROLLBACKS:-2}"
     [ -d "$base" ] || return 0
+    # if-form, not `a && b`: under set -euo pipefail a false test as the last
+    # command of the loop body fails the whole pipeline and ends install.sh.
     ls -1dt "$base"/[0-9]*/ 2>/dev/null | tail -n +$((keep+1)) | while read -r d; do
-        [ -n "$d" ] && rm -rf "$d"
+        if [ -n "$d" ]; then rm -rf "$d"; fi
     done
-    ok "backup retention: kept newest ${keep} snapshot(s) in ${base}"
+    ls -1dt "$base"/[0-9]*/ 2>/dev/null | tail -n +$((keep_rb+1)) | while read -r d; do
+        if [ -n "$d" ] && [ -d "${d}rollback" ]; then rm -rf "${d}rollback"; fi
+    done
+    ok "backup retention: kept newest ${keep} snapshot(s) in ${base} (previous installs in the newest ${keep_rb})"
     return 0
 }
 
@@ -219,7 +283,7 @@ atomic_swap() {
     # Move old install aside as rollback; install new in its place.
     if [ -d "$FPMDIR" ]; then
         mv "$FPMDIR" "$ROLLBACK_DIR"
-        ok "Old install preserved at ${ROLLBACK_DIR}  (delete when satisfied with new build)"
+        ok "Old install preserved at ${ROLLBACK_DIR}  (kept until the run ends, then moved to /root/cwp-php-backups/${BH_RUN_STAMP}/rollback/)"
     fi
     mv "$STAGE_FPMDIR" "$FPMDIR"
     ok "Swapped staged install -> ${FPMDIR}"
@@ -273,18 +337,33 @@ atomic_swap() {
         fi
     fi
 
+    # Carry over php.ini values + settings-only php.d/*.ini (disable_functions,
+    # opcache sizing, CVE mitigations, big-upload limits) — the new tree has a
+    # STOCK php.ini and an EMPTY php.d. Must happen before the first start.
+    if [ -d "$ROLLBACK_DIR" ]; then
+        # `|| warn`: FPM is stopped right now — a carry-over hiccup must never
+        # abort the run (set -e) before the start/rollback below.
+        carry_over_php_ini "${ROLLBACK_DIR}/usr/php/php.ini" "${FPMDIR}/usr/php/php.ini" \
+            || warn "php.ini carry-over failed — compare with ${ROLLBACK_DIR}/usr/php/php.ini by hand"
+        carry_over_settings_inis "${ROLLBACK_DIR}/usr/php/php.d" "${FPMDIR}/usr/php/php.d" \
+            || warn "php.d carry-over failed — compare with ${ROLLBACK_DIR}/usr/php/php.d by hand"
+    fi
+
     # Reload systemd in case the unit file just got installed/updated.
     systemctl daemon-reload
 
     # Start new service.
     log "Starting ${SVC}"
-    systemctl start "$SVC" 2>/dev/null
+    # `|| true`: under install.sh's set -e a failed start would otherwise exit
+    # right here and never reach the rollback below.
+    systemctl start "$SVC" 2>/dev/null || true
 
     # Give it a moment, then verify.
     sleep 2
     if systemctl is-active --quiet "$SVC"; then
         ok "${SVC} active  — atomic swap complete"
-        prune_alt_leftovers   # clean stale .rollback/.failed/.bak dirs (break CWP PHP Selector)
+        # The .rollback dir stays until install.sh finishes (prune_alt_leftovers):
+        # carry_over_extension_inis still reads it after the external modules.
         return 0
     fi
 
@@ -295,7 +374,7 @@ atomic_swap() {
         mv "$FPMDIR" "${FPMDIR}.failed.${BH_RUN_STAMP}"
         mv "$ROLLBACK_DIR" "$FPMDIR"
         systemctl daemon-reload
-        systemctl start "$SVC"
+        systemctl start "$SVC" || true
         if systemctl is-active --quiet "$SVC"; then
             ok "Rolled back to previous install. Service restored. New (failed) build at ${FPMDIR}.failed.${BH_RUN_STAMP}"
         else
@@ -469,8 +548,10 @@ install_systemd_service() {
 #    match the PHP point release's Zend API; produces noisy "requires Zend API
 #    420220829, you have 420230831" warnings on every CLI invocation.
 # .so files stay on disk — flip the .disabled suffix back to enable.
+# An extension the previous install had ENABLED (<rollback>/usr/php/php.d/<ext>.ini) is
+# left enabled: a rebuild must not switch off something sites were already using.
 disable_noisy_extensions() {
-    local FPMDIR="$1"
+    local FPMDIR="$1" OLDDIR="${2:-}"
     local inidir="${FPMDIR}/usr/php/php.d"
     [ -d "$inidir" ] || return 0
 
@@ -484,6 +565,10 @@ disable_noisy_extensions() {
         ext="$(echo "$ext" | xargs)"          # trim
         [ -z "$ext" ] && continue
         local ini="${inidir}/${ext}.ini"
+        if [ -n "$OLDDIR" ] && [ -f "${OLDDIR}/usr/php/php.d/${ext}.ini" ]; then
+            [ -f "$ini" ] && ok "Kept ${ext}.ini enabled — the previous install loaded it"
+            continue
+        fi
         if [ -f "$ini" ]; then
             mv "$ini" "${ini}.disabled"
             ok "Disabled ${ext}.ini -> ${ext}.ini.disabled  (rename back to re-enable)"

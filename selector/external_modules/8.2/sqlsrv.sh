@@ -3,7 +3,7 @@
 cd /usr/local/src
 yum install unixODBC unixODBC-devel -y
 rm -rf sqlsrv*
-wget http://static.cdn-cwp.com/files/php/pecl/sqlsrv-5.10.0beta1.tgz
+wget --tries=3 http://static.cdn-cwp.com/files/php/pecl/sqlsrv-5.10.0beta1.tgz || { echo "ERROR: download failed: http://static.cdn-cwp.com/files/php/pecl/sqlsrv-5.10.0beta1.tgz"; exit 1; }
 tar -xf sqlsrv-*
 cd sqlsrv-*/
 /opt/alt/php-fpm82/usr/bin/phpize
@@ -21,7 +21,7 @@ else
 fi
 
 rm -rf pdo_sqlsrv*
-wget http://static.cdn-cwp.com/files/php/pecl/pdo_sqlsrv-5.10.0beta1.tgz
+wget --tries=3 http://static.cdn-cwp.com/files/php/pecl/pdo_sqlsrv-5.10.0beta1.tgz || { echo "ERROR: download failed: http://static.cdn-cwp.com/files/php/pecl/pdo_sqlsrv-5.10.0beta1.tgz"; exit 1; }
 tar -xf pdo_sqlsrv-*
 cd pdo_sqlsrv-*/
 /opt/alt/php-fpm82/usr/bin/phpize

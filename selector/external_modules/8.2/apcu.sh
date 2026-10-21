@@ -2,7 +2,7 @@
 if [ -e "/opt/alt/php-fpm82/usr/bin/php-config" ];then
 cd /usr/local/src
 rm -rf apcu-*
-wget http://static.cdn-cwp.com/files/php/pecl/apcu-5.1.19.tgz
+wget --tries=3 http://static.cdn-cwp.com/files/php/pecl/apcu-5.1.19.tgz || { echo "ERROR: download failed: http://static.cdn-cwp.com/files/php/pecl/apcu-5.1.19.tgz"; exit 1; }
 tar -xf apcu-5.1.19.tgz
 cd apcu-5.1.19
 /opt/alt/php-fpm82/usr/bin/phpize

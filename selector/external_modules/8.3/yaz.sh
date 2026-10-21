@@ -1,14 +1,14 @@
 #!/bin/bash
 
 cd /usr/local/src
-wget http://ftp.indexdata.dk/pub/yaz/yaz-5.28.0.tar.gz -O yaz.tar.gz
+wget --tries=3 http://ftp.indexdata.dk/pub/yaz/yaz-5.28.0.tar.gz -O yaz.tar.gz || { echo "ERROR: download failed: http://ftp.indexdata.dk/pub/yaz/yaz-5.28.0.tar.gz"; exit 1; }
 tar -zxvf yaz.tar.gz
 cd yaz-*/
 ./configure
 make
 make install
 cd /usr/local/src
-curl https://pecl.php.net/get/yaz -o yaz.tgz
+curl -fsSL --retry 3 --retry-delay 5 https://pecl.php.net/get/yaz -o yaz.tgz || { echo "ERROR: download failed: https://pecl.php.net/get/yaz"; exit 1; }
 tar -zxvf yaz.tgz
 cd yaz-*/
 /opt/alt/php-fpm83/usr/bin/phpize

@@ -3,7 +3,7 @@
 yum --enablerepo=epel -y install libsodium libsodium-devel
 cd /usr/local/src
 rm -rf libsodium*
-curl https://pecl.php.net/get/libsodium -o libsodium.tgz
+curl -fsSL --retry 3 --retry-delay 5 https://pecl.php.net/get/libsodium -o libsodium.tgz || { echo "ERROR: download failed: https://pecl.php.net/get/libsodium"; exit 1; }
 tar zxf libsodium.tgz
 cd libsodium-*/
 /opt/alt/php-fpm82/usr/bin/phpize

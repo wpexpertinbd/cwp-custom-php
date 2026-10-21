@@ -28,7 +28,7 @@ cd /usr/local/src
 # --- uploadprogress PECL extension ---
 rm -rf uploadprogress* uploadprogress.tgz
 
-curl -L "https://pecl.php.net/get/uploadprogress" -o uploadprogress.tgz
+curl -fsSL --retry 3 --retry-delay 5 "https://pecl.php.net/get/uploadprogress" -o uploadprogress.tgz || { echo "ERROR: download failed: https://pecl.php.net/get/uploadprogress"; exit 1; }
 tar -xf uploadprogress.tgz
 cd uploadprogress-*
 

@@ -2,7 +2,7 @@
 
 cd /usr/local/src
 rm -rf mcrypt*
-wget http://static.cdn-cwp.com/files/php/pecl/mcrypt-1.0.4.tgz
+wget --tries=3 http://static.cdn-cwp.com/files/php/pecl/mcrypt-1.0.4.tgz || { echo "ERROR: download failed: http://static.cdn-cwp.com/files/php/pecl/mcrypt-1.0.4.tgz"; exit 1; }
 tar -xf mcrypt-*
 cd mcrypt-*/
 phpize

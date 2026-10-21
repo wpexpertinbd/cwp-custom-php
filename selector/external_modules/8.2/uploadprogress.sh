@@ -2,7 +2,7 @@
 if [ -e "/opt/alt/php-fpm82/usr/bin/php-config" ];then
 cd /usr/local/src
 rm -rf uploadprogress* uploadprogress.tgz
-curl https://pecl.php.net/get/uploadprogress -o uploadprogress.tgz
+curl -fsSL --retry 3 --retry-delay 5 https://pecl.php.net/get/uploadprogress -o uploadprogress.tgz || { echo "ERROR: download failed: https://pecl.php.net/get/uploadprogress"; exit 1; }
 tar -xf uploadprogress.tgz
 cd uploadprogress-*/
 /opt/alt/php-fpm82/usr/bin/phpize

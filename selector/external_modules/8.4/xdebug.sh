@@ -29,7 +29,7 @@ cd /usr/local/src
 rm -rf xdebug* xdebug.tgz
 
 # --- Getting the latest Xdebug ---
-curl -L https://pecl.php.net/get/xdebug -o xdebug.tgz
+curl -fsSL --retry 3 --retry-delay 5 https://pecl.php.net/get/xdebug -o xdebug.tgz || { echo "ERROR: download failed: https://pecl.php.net/get/xdebug"; exit 1; }
 tar zxf xdebug.tgz
 cd xdebug-*
 

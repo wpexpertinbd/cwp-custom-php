@@ -28,7 +28,7 @@ cd /usr/local/src
 rm -rf mongodb* || true
 
 echo "Downloading latest MongoDB driver from PECL..."
-curl -L https://pecl.php.net/get/mongodb -o mongodb.tgz
+curl -fsSL --retry 3 --retry-delay 5 https://pecl.php.net/get/mongodb -o mongodb.tgz || { echo "ERROR: download failed: https://pecl.php.net/get/mongodb"; exit 1; }
 
 tar -xzf mongodb.tgz
 cd mongodb-*/

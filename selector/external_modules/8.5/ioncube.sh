@@ -29,7 +29,7 @@ cd /usr/local
 rm -rf ioncube
 mkdir -p ioncube
 
-wget -q "$URL" -O ioncube.tar.gz
+wget --tries=3 -q "$URL" -O ioncube.tar.gz || { echo "ERROR: download failed: $URL"; exit 1; }
 tar -xf ioncube.tar.gz -C ioncube --strip-components=1
 rm -f ioncube.tar.gz
 

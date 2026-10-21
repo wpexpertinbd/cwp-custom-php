@@ -29,7 +29,7 @@ cd /usr/local/src
 LIBSSH2_VER="1.11.0"
 
 rm -rf libssh2-* libssh2.tar.gz
-curl -L "https://www.libssh2.org/download/libssh2-${LIBSSH2_VER}.tar.gz" -o libssh2.tar.gz
+curl -fsSL --retry 3 --retry-delay 5 "https://www.libssh2.org/download/libssh2-${LIBSSH2_VER}.tar.gz" -o libssh2.tar.gz || { echo "ERROR: download failed: https://www.libssh2.org/download/libssh2-${LIBSSH2_VER}.tar.gz"; exit 1; }
 tar -xzf libssh2.tar.gz
 cd "libssh2-${LIBSSH2_VER}"
 
@@ -43,7 +43,7 @@ cd /usr/local/src
 
 # --- ssh2 PECL extension ---
 rm -rf ssh2-* ssh2.tgz
-curl -L "https://pecl.php.net/get/ssh2" -o ssh2.tgz
+curl -fsSL --retry 3 --retry-delay 5 "https://pecl.php.net/get/ssh2" -o ssh2.tgz || { echo "ERROR: download failed: https://pecl.php.net/get/ssh2"; exit 1; }
 tar -xzf ssh2.tgz
 cd ssh2-*
 

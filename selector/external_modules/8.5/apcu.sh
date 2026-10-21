@@ -20,7 +20,7 @@ cd /usr/local/src
 rm -rf apcu-*
 
 echo "Downloading APCu 5.1.27..."
-wget https://pecl.php.net/get/apcu-5.1.27.tgz -O apcu.tgz
+wget --tries=3 https://pecl.php.net/get/apcu-5.1.27.tgz -O apcu.tgz || { echo "ERROR: download failed: https://pecl.php.net/get/apcu-5.1.27.tgz"; exit 1; }
 
 tar -xf apcu.tgz
 cd apcu-5.1.27

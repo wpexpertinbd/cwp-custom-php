@@ -42,6 +42,14 @@ export BH_RUN_STAMP BH_LOG_FILE
 # Print log path at exit so user always knows where it lives
 _print_log_on_exit() {
     local rc=$?
+    # A failed run leaves this run's previous installs in /opt/alt on purpose
+    # (prune_alt_leftovers only runs at the end of a successful run): say where.
+    if [ "$rc" -ne 0 ]; then
+        local d
+        for d in /opt/alt/php*.rollback."${BH_RUN_STAMP}"; do
+            [ -d "$d" ] && printf '[install.sh] previous install kept at: %s\n' "$d"
+        done
+    fi
     if [ "$BH_LOG_FILE" != "/dev/null" ]; then
         printf '\n[install.sh] exit %s — log at: %s\n' "$rc" "$BH_LOG_FILE"
     fi
@@ -367,8 +375,15 @@ for spec in "${BUILT[@]}"; do
     postcheck "$major"
 done
 
+# The run succeeded: move this run's previous installs (.rollback.<stamp>) out
+# of /opt/alt — leftovers there break CWP's PHP Selector — into the backup dir.
+prune_alt_leftovers
+
 # Retention: keep only the newest few backup snapshots so /root/cwp-php-backups
 # doesn't grow to GBs (each run stashes the prior ioncube dir ~90MB).
 prune_old_backups
 
+for d in "${BH_ROLLBACK_KEPT[@]}"; do
+    [ -d "$d" ] && ok "Previous install kept at: ${d}  (php.ini / php.d to compare or restore from)"
+done
 ok "All done. Backups: /root/cwp-php-backups/${BH_RUN_STAMP}/"

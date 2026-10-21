@@ -40,8 +40,8 @@ cd /usr/local/src
 rm -rf sqlsrv-* pdo_sqlsrv-* sqlsrv.tgz pdo_sqlsrv.tgz
 
 ### Download PECL sources
-curl -L "https://pecl.php.net/get/sqlsrv-${SQLSRV_VER}.tgz" -o sqlsrv.tgz
-curl -L "https://pecl.php.net/get/pdo_sqlsrv-${SQLSRV_VER}.tgz" -o pdo_sqlsrv.tgz
+curl -fsSL --retry 3 --retry-delay 5 "https://pecl.php.net/get/sqlsrv-${SQLSRV_VER}.tgz" -o sqlsrv.tgz || { echo "ERROR: download failed: https://pecl.php.net/get/sqlsrv-${SQLSRV_VER}.tgz"; exit 1; }
+curl -fsSL --retry 3 --retry-delay 5 "https://pecl.php.net/get/pdo_sqlsrv-${SQLSRV_VER}.tgz" -o pdo_sqlsrv.tgz || { echo "ERROR: download failed: https://pecl.php.net/get/pdo_sqlsrv-${SQLSRV_VER}.tgz"; exit 1; }
 
 # --- Build sqlsrv ---
 tar -xzf sqlsrv.tgz

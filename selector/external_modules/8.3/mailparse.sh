@@ -2,7 +2,7 @@
 
 cd /usr/local/src
 rm -rf mailparse*
-curl https://pecl.php.net/get/mailparse -o mailparse.tgz
+curl -fsSL --retry 3 --retry-delay 5 https://pecl.php.net/get/mailparse -o mailparse.tgz || { echo "ERROR: download failed: https://pecl.php.net/get/mailparse"; exit 1; }
 tar zxf mailparse.tgz
 cd mailparse-*/
 /opt/alt/php-fpm83/usr/bin/phpize

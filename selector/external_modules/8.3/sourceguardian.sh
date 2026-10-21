@@ -1,7 +1,7 @@
 #!/bin/bash
 
 cd /usr/local
-wget -U 'Mozilla/5.0 (X11; Linux x86_64; rv:30.0) Gecko/20100101 Firefox/30.0' https://www.sourceguardian.com/loaders/download/loaders.linux-x86_64.zip -O sourceguardian64.zip
+wget --tries=3 -U 'Mozilla/5.0 (X11; Linux x86_64; rv:30.0) Gecko/20100101 Firefox/30.0' https://www.sourceguardian.com/loaders/download/loaders.linux-x86_64.zip -O sourceguardian64.zip || { echo "ERROR: download failed: https://www.sourceguardian.com/loaders/download/loaders.linux-x86_64.zip"; exit 1; }
 unzip -o sourceguardian64.zip -d /usr/local/sourceguardian
 rm -rf /opt/alt/php-fpm83/usr/php/php.d/sourceguardian.ini
 touch /opt/alt/php-fpm83/usr/php/php.d/sourceguardian.ini

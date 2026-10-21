@@ -28,7 +28,7 @@ MAILPARSE_VERSION="3.1.6"
 MAILPARSE_URL="https://pecl.php.net/get/mailparse-${MAILPARSE_VERSION}.tgz"
 
 echo "Downloading mailparse ${MAILPARSE_VERSION}..."
-wget -q "${MAILPARSE_URL}" -O mailparse.tgz
+wget --tries=3 -q "${MAILPARSE_URL}" -O mailparse.tgz || { echo "ERROR: download failed: ${MAILPARSE_URL}"; exit 1; }
 
 tar -xf mailparse.tgz
 cd "mailparse-${MAILPARSE_VERSION}"

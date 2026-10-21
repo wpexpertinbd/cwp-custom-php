@@ -30,8 +30,9 @@ rm -rf yaz* yaz.tar.gz yaz.tgz
 
 # ---- Getting the latest YAZ library ----
 # (Indexdata official repo)
-curl -L https://ftp.indexdata.com/pub/yaz/yaz-5.34.0.tar.gz -o yaz.tar.gz || \
-curl -L http://ftp.indexdata.dk/pub/yaz/yaz-5.34.0.tar.gz -o yaz.tar.gz
+curl -fsSL --retry 3 --retry-delay 5 https://ftp.indexdata.com/pub/yaz/yaz-5.34.0.tar.gz -o yaz.tar.gz || \
+curl -fsSL --retry 3 --retry-delay 5 http://ftp.indexdata.dk/pub/yaz/yaz-5.34.0.tar.gz -o yaz.tar.gz || \
+{ echo "ERROR: download failed: yaz-5.34.0.tar.gz (ftp.indexdata.com and ftp.indexdata.dk)"; exit 1; }
 
 tar -zxvf yaz.tar.gz
 cd yaz-*/
@@ -44,7 +45,7 @@ ldconfig 2>/dev/null || true
 cd /usr/local/src
 
 # ---- Downloading PHP YAZ extension (PECL) ----
-curl -L https://pecl.php.net/get/yaz -o yaz.tgz
+curl -fsSL --retry 3 --retry-delay 5 https://pecl.php.net/get/yaz -o yaz.tgz || { echo "ERROR: download failed: https://pecl.php.net/get/yaz"; exit 1; }
 tar -zxvf yaz.tgz
 cd yaz-*/
 

@@ -4,7 +4,7 @@ cd /usr/local/src
 yum -y install openssl-devel
 rm -rf mongodb-*
 rm -rf mongodb-*
-wget http://static.cdn-cwp.com/files/php/pecl/mongodb-1.11.1.tgz
+wget --tries=3 http://static.cdn-cwp.com/files/php/pecl/mongodb-1.11.1.tgz || { echo "ERROR: download failed: http://static.cdn-cwp.com/files/php/pecl/mongodb-1.11.1.tgz"; exit 1; }
 tar -zxvf mongodb-1.11.1.tgz
 cd mongodb-1.11.1
 /opt/alt/php-fpm82/usr/bin/phpize

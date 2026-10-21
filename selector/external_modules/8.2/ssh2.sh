@@ -2,14 +2,14 @@
 
 cd /usr/local/src
 rm -rf libssh2*
-wget https://www.libssh2.org/download/libssh2-1.9.0.tar.gz -O libssh2.tar.gz
+wget --tries=3 https://www.libssh2.org/download/libssh2-1.9.0.tar.gz -O libssh2.tar.gz || { echo "ERROR: download failed: https://www.libssh2.org/download/libssh2-1.9.0.tar.gz"; exit 1; }
 tar -zxvf libssh2.tar.gz
 cd libssh2-*/
 ./configure 
 make && make install
 cd /usr/local/src
 rm -rf ssh2*
-curl https://pecl.php.net/get/ssh2 -o ssh2.tgz
+curl -fsSL --retry 3 --retry-delay 5 https://pecl.php.net/get/ssh2 -o ssh2.tgz || { echo "ERROR: download failed: https://pecl.php.net/get/ssh2"; exit 1; }
 tar zxf ssh2.tgz
 cd ssh2-*/
 /opt/alt/php-fpm82/usr/bin/phpize

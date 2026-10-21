@@ -30,9 +30,10 @@ mkdir -p "${SG_DIR}"
 echo "Downloading SourceGuardian loaders..."
 
 cd /usr/local
-wget -U 'Mozilla/5.0' \
+wget --tries=3 -U 'Mozilla/5.0' \
   https://www.sourceguardian.com/loaders/download/loaders.linux-x86_64.zip \
-  -O sourceguardian_loaders.zip
+  -O sourceguardian_loaders.zip \
+  || { echo "ERROR: download failed: https://www.sourceguardian.com/loaders/download/loaders.linux-x86_64.zip"; exit 1; }
 
 unzip -o sourceguardian_loaders.zip -d "${SG_DIR}" >/dev/null 2>&1
 

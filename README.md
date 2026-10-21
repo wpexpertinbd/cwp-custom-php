@@ -79,6 +79,27 @@ curl -fsSL https://raw.githubusercontent.com/wpexpertinbd/cwp-custom-php/main/in
   | bash -s -- --php 8.4=latest
 ```
 
+### Upgrade CWP's main PHP (suPHP / CLI) — `--main`
+
+Every site that is **not** on PHP-FPM runs on CWP's main PHP (`/usr/local/bin/php` + `php-cgi`), and CWP's PHP Version Switcher only offers the releases CWP has packaged. `--main` rebuilds it to the newest php.net release **of the branch it already runs** (8.2–8.5):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wpexpertinbd/cwp-custom-php/main/install.sh \
+  | bash -s -- --main
+
+# everything at once: PHP-FPM 8.2-8.5 and the main PHP
+curl -fsSL https://raw.githubusercontent.com/wpexpertinbd/cwp-custom-php/main/install.sh \
+  | bash -s -- --php 8.2=latest,8.3=latest,8.4=latest,8.5=latest --force-conf --main
+```
+
+- Uses the **exact configure options of the running build** (read from `php -i`), so the same extensions are compiled in and the same libraries linked.
+- The source tarball is checked against the **sha256 php.net publishes**; a mismatch stops the run.
+- `php.ini`, `php.d/` and the PECL / ionCube / SourceGuardian `.so` files are not touched (same extension API inside a branch).
+- Everything `make install` replaces is tarred to `/root/cwp-php-backups/<stamp>/main-php/` first. The run **rolls back automatically** if the new binary is not the target version, a module disappeared, a setting changed, or PHP prints a startup warning.
+- Every site on the main PHP is fetched before and after; any site that answers differently is listed with the rollback command.
+- `--main=8.3.36` pins a version. It never changes the branch (8.3 stays 8.3) and never downgrades. Already current = nothing to do (`BH_MAIN_FORCE=1` rebuilds anyway).
+- On 7.x / 8.0 / 8.1 it does nothing: php.net no longer releases fixes for those branches.
+
 ### ⚠️ Advanced flags — only use after reading the warnings
 
 `--clean-shadow-libs` and `--system-php=X.Y` exist for specific repair scenarios but **caused tenant outages on s1 (2026-05-27)** when used as part of the default rollout. They override CWP's behaviour for `/usr/local/bin/php*` and `/usr/local/lib*/`. Don't include them in fleet rollout commands unless you have a specific known problem and have read what they do in the [Options reference](#options-reference) below.
@@ -200,6 +221,7 @@ systemctl status php-fpm84
 | Flag                  | What it does |
 |-----------------------|--------------|
 | `--php X.Y[=VER]`     | PHP majors to install/update. Accepts `8.4`, `8.4=8.4.21`, `8.4=latest`, comma-list `8.3,8.4,8.5`. |
+| `--main[=VER]`        | Also upgrade CWP's main (suPHP / CLI) PHP to the newest release of its own branch, or to `VER` in that branch. Backed up first, rolled back automatically on any difference. See [Upgrade CWP's main PHP](#upgrade-cwps-main-php-suphp--cli----main). `--php` becomes optional. |
 | `--build-only`        | Skip GUI scaffolding deploy. Use for repeat builds. |
 | `--force-conf`        | Overwrite existing `/usr/local/cwp/.conf/php-fpm_conf/php{NN}*.conf` (EL8 only). |
 | `--refresh-ioncube`   | Post-CWP-rebuild recovery (libzip + ioncube + versions.ini merge + restart all custom php-fpm). **Also re-asserts the big-upload limit** (CWP rebuilds reset it to 64 MB) — honors `--big-upload` / `BH_BIG_UPLOAD_MB` (default 2048, `0` to skip). Run after ANY CWP UI rebuild. |
@@ -219,6 +241,7 @@ systemctl status php-fpm84
 | `BH_REPO_URL`        | Override the curl\|bash clone source (defaults to this repo). |
 | `BH_REPO_BRANCH`     | Branch for curl\|bash mode (default `main`). |
 | `BH_ALLOW_EXTERNAL_PCRE=1` | Build even though the existing EL8 `php{NN}.conf` has `--with-external-pcre` (links the system PCRE2 10.32). Default: refuse; the fix is `--force-conf`. |
+| `BH_MAIN_FORCE=1`    | With `--main`: rebuild the main PHP even when it already runs the target version. |
 | `BH_KEEP_ROLLBACKS`  | How many of the newest backup snapshots keep the whole previous install (`rollback/`, ~150-250 MB per PHP version). Default `2`. |
 
 ## EL8 vs EL9 (auto-detected)
@@ -243,6 +266,7 @@ Every run creates `/root/cwp-php-backups/<YYYYMMDD-HHMMSS>/` with:
 - Renamed `curl-local.conf.disabled.<stamp>` if the trap was triggered
 - `rollback/php-fpmNN/` — the **whole previous install** (its `php.ini`, `php.d/`, extensions), moved out of `/opt/alt` at the end of a successful run and named in the final summary. A failed run leaves it at `/opt/alt/php-fpmNN.rollback.<stamp>` and says so on exit.
 - Every `php.d/*.ini` the installer edited or removed (static-module loaders)
+- `main-php/` (with `--main`) — `main-php-<old version>.tgz` of everything the main-PHP install replaced (restore: `tar -xzf <file> -C /`), plus the module / setting / site-status snapshots taken before and after
 
 Safe to delete after a successful build.
 
@@ -258,6 +282,7 @@ cwp-custom-php/
 │   ├── deploy-conf.sh                            # /usr/local/cwp/.conf/php-fpm_conf/ seeding (EL8 only)
 │   ├── build-php.sh                              # unified builder with EL-aware profiles
 │   ├── carry-config.sh                           # carries php.ini values + php.d/*.ini across a rebuild
+│   ├── main-php.sh                               # --main: upgrade CWP's main (suPHP/CLI) PHP in /usr/local
 │   ├── ioncube.sh                                # refresh loaders + stale-check + auto-heal
 │   └── postcheck.sh                              # verification table
 ├── selector/
@@ -282,6 +307,9 @@ cwp-custom-php/
 **Build seems to hang** — that's normal. `make -j$(nproc)` on PHP source takes 5-15 minutes depending on CPU.
 
 ## Changelog
+
+### 2026-10-22 — `--main`: upgrade CWP's main (suPHP / CLI) PHP too
+The CVE-2026-109618/109619 rollout patched every PHP-FPM build, but most sites on a CWP box run on the main PHP, which CWP's switcher could only move to CWP's own (unpatched) packages. `--main` rebuilds it from php.net source with the running build's own configure options, keeps `php.ini`/`php.d`/extensions, verifies modules, settings and startup, checks every site before and after, and rolls back on any difference. Used on six production servers (8.3.31 → 8.3.36, 8.2.31 → 8.2.35) with every site answering exactly as before.
 
 ### 2026-10-21 — a rebuild never loses the existing configuration
 Rebuilding the fleet to the CVE-2026-109618/109619 releases (8.2.35 / 8.3.36 / 8.4.27 / 8.5.12) showed every atomic swap installing a **stock `php.ini` and an empty `php.d/`**: `disabled_function.ini` (`disable_functions = exec, system, …`), `zz-opcache-tuned.ini`, `zz-bh-cve-2026-109619.ini` and the CWP big-upload values were silently dropped, and a site broke on `memory_limit = 128M`.

@@ -1,43 +1,78 @@
 #!/bin/bash
-# main-php.sh — upgrade CWP's MAIN PHP (the suPHP / CLI build in /usr/local) to a
-# newer point release of the SAME branch, e.g. 8.3.31 -> 8.3.36.
+# main-php.sh — upgrade CWP's suPHP PHP builds to a newer point release of the SAME
+# branch, e.g. 8.3.31 -> 8.3.36:
+#   --main      the MAIN build in /usr/local (/usr/local/bin/php + php-cgi): every
+#               vhost that is not on PHP-FPM runs on it
+#   --selector  CWP's "PHP Selector" builds in /opt/alt/phpNN, which a suPHP site picks
+#               with `AddHandler application/x-httpd-phpNN` in its .htaccess
 #
-# Why: CWP's own PHP Version Switcher only offers the versions CWP has packaged,
-# so security releases arrive late or never. Most sites on a CWP box run on this
-# build (every vhost that is not on PHP-FPM), so it matters as much as FPM.
+# Why: CWP's own PHP Version Switcher / Selector only offer the versions CWP has
+# packaged, so security releases arrive late or never.
 #
 # How: rebuild from php.net source with the EXACT configure command of the running
-# build (read from `php -i`), so the same extensions are compiled in and the same
-# libraries are linked. php.ini, php.d and the PECL/loader .so files are not
-# touched (same extension API inside a branch). Everything `make install` replaces
-# is tarred first; a failed install or verification restores it automatically.
+# build (read from `php -i`), so the same prefix is used, the same extensions are
+# compiled in and the same libraries linked. php.ini, php.d and the PECL/loader .so
+# files are not touched (same extension API inside a branch). Everything
+# `make install` replaces is tarred first; a failed install or verification restores
+# it automatically.
 #
-# Sourced by install.sh. Entry point: upgrade_main_php <hint>   (hint: ""|latest|X.Y.Z)
+# Sourced by install.sh. Entry points:
+#   upgrade_main_php <hint>              (hint: ""|latest|X.Y.Z)
+#   upgrade_selector_php <branch list>   (""=every 8.2-8.5 selector build present)
 
-MAIN_PHP=/usr/local/bin/php
-MAIN_CGI=/usr/local/bin/php-cgi
-MAIN_INI_KEYS="disable_functions memory_limit upload_max_filesize post_max_size max_execution_time session.upload_progress.enabled opcache.enable"
+SU_INI_KEYS="disable_functions memory_limit upload_max_filesize post_max_size max_execution_time session.upload_progress.enabled opcache.enable"
+SU_PHP=""      # CLI binary of the build being upgraded (set by upgrade_suphp_build)
+MAIN_RESULT=""
+SELECTOR_RESULTS=()
 
-main_php_ini() {   # main_php_ini <key> — effective value from the running main PHP
-    "$MAIN_PHP" -i 2>/dev/null | awk -F' => ' -v k="$1" '$1==k{print $2; exit}'
+su_php_ini() {   # su_php_ini <key> — effective value from the build being upgraded
+    "$SU_PHP" -i 2>/dev/null | awk -F' => ' -v k="$1" '$1==k{print $2; exit}'
 }
 
-main_php_modules() {
-    "$MAIN_PHP" -m 2>/dev/null | grep -vE '^\[|^$' | sort
+su_php_modules() {
+    "$SU_PHP" -m 2>/dev/null | grep -vE '^\[|^$' | sort
 }
 
-# main_php_snapshot <modules file> <ini file> — fails unless both were fully written.
-main_php_snapshot() {
+su_php_warnings() {   # the warning lines PHP prints at startup, sorted
+    "$SU_PHP" -v 2>&1 | grep -iE 'warning|already loaded|unable to load|requires zend' | sort -u || true
+}
+
+# su_php_check_install_paths <expected prefix> <configure args...>
+# make install writes wherever the configure line says. Every install location
+# must resolve inside the build being upgraded: the LAST --prefix wins (default
+# /usr/local), and every explicit install-dir option must lie under it.
+su_php_check_install_paths() {
+    local want="$1" a eff="/usr/local" opt val; shift
+    for a in "$@"; do
+        case "$a" in --prefix=*) eff="${a#--prefix=}" ;; esac
+    done
+    eff="${eff%/}"
+    [ "$eff" = "$want" ] || { err "configure installs into '${eff}', not '${want}' — refusing"; return 1; }
+    for a in "$@"; do
+        case "$a" in
+            --exec-prefix=*|--bindir=*|--sbindir=*|--libexecdir=*|--libdir=*|--includedir=*|--datarootdir=*|--datadir=*|--sysconfdir=*|--localstatedir=*|--sharedstatedir=*|--mandir=*|--infodir=*|--docdir=*|--with-pear=*)
+                opt="${a%%=*}"; val="${a#*=}"
+                case "$val" in
+                    "$want"|"$want"/*) ;;
+                    *) err "configure option ${opt}=${val} installs outside ${want} — refusing"; return 1 ;;
+                esac ;;
+        esac
+    done
+}
+
+# su_php_snapshot <modules file> <ini file> — fails unless both were fully written.
+su_php_snapshot() {
     local k n
-    main_php_modules > "$1" || return 1
+    su_php_modules > "$1" || return 1
     [ -s "$1" ] || return 1
-    for k in $MAIN_INI_KEYS; do echo "${k}=$(main_php_ini "$k")"; done > "$2" || return 1
+    for k in $SU_INI_KEYS; do echo "${k}=$(su_php_ini "$k")"; done > "$2" || return 1
     n="$(wc -l < "$2")"
-    [ "$n" -eq "$(echo $MAIN_INI_KEYS | wc -w)" ]
+    [ "$n" -eq "$(echo $SU_INI_KEYS | wc -w)" ]
 }
 
-# Every vhost not served by PHP-FPM runs on the main PHP. Prints "<domain> <http code>".
-main_php_site_codes() {
+# Every vhost not served by PHP-FPM runs on a suPHP build (main or selector).
+# Prints "<domain> <http code>".
+su_php_site_codes() {
     local ip f d c
     ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
     for f in /usr/local/apache/conf.d/vhosts/*.conf; do
@@ -52,7 +87,7 @@ main_php_site_codes() {
 }
 
 # php.net publishes a sha256 for every release; refuse a tarball that does not match.
-main_php_fetch_source() {
+su_php_fetch_source() {
     local ver="$1" dir="$2" f="php-${1}.tar.xz" want got
     mkdir -p "$dir"
     curl -fsSL --retry 3 --max-time 300 -o "${dir}/${f}" "https://www.php.net/distributions/${f}" \
@@ -68,31 +103,44 @@ print(next(s['sha256'] for s in d.get('source',[]) if s.get('filename')=='${f}')
     tar -xJf "${dir}/${f}" -C "$dir" && [ -d "${dir}/php-${ver}" ] || { err "could not extract ${f}"; return 1; }
 }
 
-main_php_restore() {   # main_php_restore <backup tgz>
-    warn "restoring the previous main PHP from $1"
-    if tar -xzf "$1" -C /; then
-        ok "restored: main PHP is $("$MAIN_PHP" -r 'echo PHP_VERSION;' 2>/dev/null || echo '?') again"
+# su_php_restore <backup tgz> <backed-up path>...
+# Directories are moved aside before the extract, so files the failed install ADDED
+# do not survive the rollback; if the extract fails they are moved back.
+su_php_restore() {
+    local b="$1" p moved=(); shift
+    warn "restoring the previous build from $b"
+    for p in "$@"; do
+        if [ -d "$p" ] && [ ! -L "$p" ] && mv "$p" "${p}.bh-undo.$$"; then moved+=("$p"); fi
+    done
+    if tar -xzf "$b" -C /; then
+        for p in "${moved[@]}"; do rm -rf -- "${p}.bh-undo.$$"; done
+        ok "restored: $SU_PHP is $("$SU_PHP" -r 'echo PHP_VERSION;' 2>/dev/null | tail -1) again"
     else
-        err "RESTORE FAILED — extract by hand: tar -xzf $1 -C /"
+        for p in "${moved[@]}"; do rm -rf -- "$p"; mv "${p}.bh-undo.$$" "$p"; done
+        err "RESTORE FAILED — the failed install is still in place; extract by hand: tar -xzf $b -C /"
     fi
 }
 
-upgrade_main_php() {
-    local hint="$1"
-    section "Main PHP (suPHP / CLI in /usr/local)"
+# upgrade_suphp_build <label> <bin dir> <expected prefix> <hint> <backup path>...
+# Sets SU_RESULT. Returns 1 on failure (the previous build is back in place).
+upgrade_suphp_build() {
+    local label="$1" bindir="$2" prefix="$3" hint="$4"; shift 4
+    local cgi="${bindir}/php-cgi" lsphp="${bindir}/lsphp"
+    SU_PHP="${bindir}/php"; SU_RESULT=""
 
-    [ -x "$MAIN_PHP" ] && [ -x "$MAIN_CGI" ] || { err "no main PHP at $MAIN_PHP / $MAIN_CGI"; return 1; }
-    if [ -L "$MAIN_PHP" ]; then
-        err "$MAIN_PHP is a symlink to $(readlink -f "$MAIN_PHP") (--system-php?) — not a CWP main build, refusing"
+    [ -x "$SU_PHP" ] && [ -x "$cgi" ] || { err "${label}: no php / php-cgi in ${bindir}"; return 1; }
+    if [ -L "$SU_PHP" ]; then
+        err "${label}: $SU_PHP is a symlink to $(readlink -f "$SU_PHP") (--system-php?) — not a CWP build, refusing"
         return 1
     fi
 
     local cur branch target
-    cur="$("$MAIN_PHP" -r 'echo PHP_VERSION;' 2>/dev/null)" || { err "main PHP does not run"; return 1; }
+    cur="$("$SU_PHP" -r 'echo PHP_VERSION;' 2>/dev/null | tail -1)"
+    [[ "$cur" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { err "${label}: PHP does not run"; return 1; }
     branch="${cur%.*}"
     if ! valid_major "$branch"; then
-        warn "main PHP is ${cur}: php.net no longer releases fixes for ${branch}, so there is nothing to upgrade to."
-        warn "Move the sites to a supported branch, or apply the vendor's mitigation in php.ini."
+        warn "${label} is ${cur}: php.net no longer releases fixes for ${branch}, so there is nothing to upgrade to."
+        SU_RESULT="${label} ${cur} (branch no longer supported upstream — not changed)"
         return 0
     fi
     if [ -n "$hint" ] && [ "$hint" != "latest" ]; then
@@ -101,87 +149,92 @@ upgrade_main_php() {
         target="$(resolve_php_version "$branch" latest)"
     fi
     if ! [[ "$target" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || [ "${target%.*}" != "$branch" ]; then
-        err "--main target '${target}' is not a ${branch}.x release (the branch cannot change: extensions would break)"
+        err "${label}: target '${target}' is not a ${branch}.x release (the branch cannot change: extensions would break)"
         return 1
     fi
     if [ "$target" = "$cur" ] && [ "${BH_MAIN_FORCE:-0}" != "1" ]; then
-        ok "main PHP is already ${cur} — nothing to do (BH_MAIN_FORCE=1 rebuilds anyway)"
-        MAIN_RESULT="main PHP ${cur} (already current)"
+        ok "${label} is already ${cur} — nothing to do (BH_MAIN_FORCE=1 rebuilds anyway)"
+        SU_RESULT="${label} ${cur} (already current)"
         return 0
     fi
     if version_lt "$target" "$cur"; then
-        err "--main target ${target} is OLDER than the running ${cur} — refusing to downgrade"; return 1
+        err "${label}: target ${target} is OLDER than the running ${cur} — refusing to downgrade"; return 1
     fi
-    log "main PHP: ${cur} -> ${target}"
+    log "${label}: ${cur} -> ${target}"
 
     local args
-    args="$("$MAIN_PHP" -i 2>/dev/null | grep -m1 '^Configure Command' \
+    args="$("$SU_PHP" -i 2>/dev/null | grep -m1 '^Configure Command' \
         | sed -E "s/^Configure Command =>[[:space:]]*//; s/^'\\.\\/configure'[[:space:]]*//")"
-    [ -n "$args" ] || { err "could not read the running build's Configure Command"; return 1; }
+    [ -n "$args" ] || { err "${label}: could not read the running build's Configure Command"; return 1; }
+    # The configure line decides where make install writes. It must be the build we
+    # are upgrading, never another one (checked on the parsed words, not the string).
+    local cfg=()
+    eval "cfg=( $args )" || { err "${label}: could not parse the Configure Command"; return 1; }
+    su_php_check_install_paths "$prefix" "${cfg[@]}" || { err "${label}: refusing to build"; return 1; }
 
-    local snap; snap="$(backup_root)/main-php"
+    local snap; snap="$(backup_root)/suphp-${label// /-}"
     mkdir -p "$snap"
-    main_php_snapshot "${snap}/modules-before.txt" "${snap}/ini-before.txt" \
-        || { err "could not record the current modules/settings in ${snap} (disk full?) — nothing was changed"; return 1; }
-    local had_lsphp=0; [ -x /usr/local/bin/lsphp ] && had_lsphp=1
+    su_php_snapshot "${snap}/modules-before.txt" "${snap}/ini-before.txt" \
+        || { err "${label}: could not record the current modules/settings in ${snap} (disk full?) — nothing was changed"; return 1; }
+    su_php_warnings > "${snap}/warnings-before.txt"
+    local had_lsphp=0; [ -x "$lsphp" ] && had_lsphp=1
 
-    local src="/usr/local/src/bh-main-php-${target}"
+    local src="/usr/local/src/bh-suphp-${label// /-}-${target}"
     rm -rf "$src"
-    main_php_fetch_source "$target" "$src" || return 1
+    su_php_fetch_source "$target" "$src" || return 1
 
     local nicep jobs; nicep="$(build_nice_prefix)"; jobs="$(build_jobs)"
     log "configure with the running build's options (log: ${src}/configure.log)"
-    ( cd "${src}/php-${target}" && eval "set -- $args" && $nicep ./configure "$@" ) > "${src}/configure.log" 2>&1 \
-        || { err "configure failed — tail ${src}/configure.log"; return 1; }
+    ( cd "${src}/php-${target}" && $nicep ./configure "${cfg[@]}" ) > "${src}/configure.log" 2>&1 \
+        || { err "${label}: configure failed — tail ${src}/configure.log"; return 1; }
     log "make -j${jobs} (log: ${src}/make.log)"
     ( cd "${src}/php-${target}" && $nicep make -j"$jobs" ) > "${src}/make.log" 2>&1 \
-        || { err "make failed — tail ${src}/make.log"; return 1; }
-    "${src}/php-${target}/sapi/cli/php" -v 2>/dev/null | head -1 | grep -q "PHP ${target} " \
-        || { err "the freshly built binary is not ${target}"; return 1; }
+        || { err "${label}: make failed — tail ${src}/make.log"; return 1; }
+    "${src}/php-${target}/sapi/cli/php" -v 2>/dev/null | grep -q "^PHP ${target} " \
+        || { err "${label}: the freshly built binary is not ${target}"; return 1; }
     ok "PHP ${target} built"
 
-    log "checking every site on the main PHP before the swap"
-    main_php_site_codes > "${snap}/sites-before.txt"
+    log "checking every suPHP site before the swap"
+    su_php_site_codes > "${snap}/sites-before.txt"
     log "  $(wc -l < "${snap}/sites-before.txt") site(s)"
 
-    local b="${snap}/main-php-${cur}.tgz" f extra=""
-    for f in /usr/local/bin/phpdbg /usr/local/bin/lsphp /usr/local/bin/pear /usr/local/bin/peardev /usr/local/bin/pecl /usr/local/bin/phar.phar /usr/local/bin/phar; do
-        [ -e "$f" ] && extra="$extra $f"
-    done
+    local b="${snap}/php-${cur}.tgz" p existing=""
+    for p in "$@"; do [ -e "$p" ] && existing="$existing $p"; done
     # shellcheck disable=SC2086
-    tar -czf "$b" /usr/local/bin/php /usr/local/bin/php-cgi /usr/local/bin/phpize /usr/local/bin/php-config \
-        $extra /usr/local/lib/php /usr/local/include/php /usr/local/php 2>/dev/null \
-        || { err "backup of the current main PHP failed — nothing was changed"; return 1; }
+    tar -czf "$b" $existing 2>/dev/null \
+        || { err "${label}: backup of the current build failed — nothing was changed"; return 1; }
     ok "backup: $b ($(du -h "$b" | cut -f1))"
 
     if ! ( cd "${src}/php-${target}" && make install ) > "${src}/install.log" 2>&1; then
-        err "make install failed — tail ${src}/install.log"
-        main_php_restore "$b"; return 1
+        err "${label}: make install failed — tail ${src}/install.log"
+        su_php_restore "$b" "$@"; return 1
     fi
 
     local v c l="-" w lost new inidiff
-    v="$("$MAIN_PHP" -r 'echo PHP_VERSION;' 2>/dev/null)"
-    c="$("$MAIN_CGI" -v 2>/dev/null | head -1 | cut -d' ' -f2)"
-    [ "$had_lsphp" = 1 ] && l="$(/usr/local/bin/lsphp -v 2>/dev/null | head -1 | cut -d' ' -f2)"
-    w="$("$MAIN_PHP" -v 2>&1 | grep -ciE 'warning|already loaded|unable to load' || true)"
+    v="$("$SU_PHP" -r 'echo PHP_VERSION;' 2>/dev/null | tail -1)"
+    c="$("$cgi" -v 2>/dev/null | grep -m1 '^PHP ' | cut -d' ' -f2)"
+    [ "$had_lsphp" = 1 ] && l="$("$lsphp" -v 2>/dev/null | grep -m1 '^PHP ' | cut -d' ' -f2)"
     # A snapshot that could not be written must FAIL the check, never compare as "no difference".
-    if ! main_php_snapshot "${snap}/modules-after.txt" "${snap}/ini-after.txt"; then
-        err "could not record the new modules/settings (disk full?)"
-        main_php_restore "$b"; return 1
+    if ! su_php_snapshot "${snap}/modules-after.txt" "${snap}/ini-after.txt" \
+       || ! su_php_warnings > "${snap}/warnings-after.txt"; then
+        err "${label}: could not record the new modules/settings (disk full?)"
+        su_php_restore "$b" "$@"; return 1
     fi
+    # Any warning line that was not there before is a new fault, even if an old one went away.
+    w="$(comm -13 "${snap}/warnings-before.txt" "${snap}/warnings-after.txt")"
     lost="$(comm -23 "${snap}/modules-before.txt" "${snap}/modules-after.txt" | tr '\n' ' ')"
     new="$(comm -13 "${snap}/modules-before.txt" "${snap}/modules-after.txt" | tr '\n' ' ')"
     inidiff="$(diff "${snap}/ini-before.txt" "${snap}/ini-after.txt" | grep '^[<>]' | tr '\n' ' ' || true)"
-    log "cli ${v:-?} | cgi ${c:-?} | lsphp ${l:-?} | startup warnings ${w} | modules lost [${lost:-none}] new [${new:-none}] | ini changes [${inidiff:-none}]"
+    log "cli ${v:-?} | cgi ${c:-?} | lsphp ${l:-?} | new startup warnings [${w:-none}] | modules lost [${lost:-none}] new [${new:-none}] | ini changes [${inidiff:-none}]"
     if [ "$v" != "$target" ] || [ "$c" != "$target" ] || { [ "$had_lsphp" = 1 ] && [ "$l" != "$target" ]; } \
-       || [ "$w" != "0" ] || [ -n "$lost" ] || [ -n "$inidiff" ]; then
-        err "verification failed"
-        main_php_restore "$b"; return 1
+       || [ -n "$w" ] || [ -n "$lost" ] || [ -n "$inidiff" ]; then
+        err "${label}: verification failed"
+        su_php_restore "$b" "$@"; return 1
     fi
-    ok "main PHP ${cur} -> ${target}: same modules, same settings, no startup warnings"
+    ok "${label} ${cur} -> ${target}: same modules, same settings, no new startup warnings"
 
-    log "re-checking every site on the main PHP"
-    main_php_site_codes > "${snap}/sites-after.txt"
+    log "re-checking every suPHP site"
+    su_php_site_codes > "${snap}/sites-after.txt"
     local changed
     changed="$(diff "${snap}/sites-before.txt" "${snap}/sites-after.txt" | grep '^[<>]' || true)"
     if [ -z "$changed" ]; then
@@ -191,6 +244,58 @@ upgrade_main_php() {
         printf '%s\n' "$changed" | sed 's/^/[WARN]     /' >&2
         warn "check them; to go back: tar -xzf $b -C /"
     fi
-    MAIN_RESULT="main PHP ${cur} -> ${target} (rollback: tar -xzf $b -C /)"
+    SU_RESULT="${label} ${cur} -> ${target} (rollback: tar -xzf $b -C /)"
     rm -rf "$src"
+}
+
+upgrade_main_php() {
+    section "Main PHP (suPHP / CLI in /usr/local)"
+    local f extra=""
+    for f in phpdbg lsphp pear peardev pecl phar.phar phar; do extra="$extra /usr/local/bin/$f"; done
+    # shellcheck disable=SC2086
+    upgrade_suphp_build "main PHP" /usr/local/bin /usr/local "$1" \
+        /usr/local/bin/php /usr/local/bin/php-cgi /usr/local/bin/phpize /usr/local/bin/php-config $extra \
+        /usr/local/lib/php /usr/local/include/php /usr/local/php
+    local rc=$?
+    MAIN_RESULT="$SU_RESULT"
+    return $rc
+}
+
+# upgrade_selector_php <comma list of branches, e.g. "8.2,8.3"; empty = every 8.2-8.5 present>
+upgrade_selector_php() {
+    local want="${1// /}" d nn br ver failed=0 done_list=","
+    section "PHP Selector builds (/opt/alt/phpNN)"
+    for d in /opt/alt/php[0-9][0-9]; do
+        [ -d "$d" ] && [ -x "${d}/usr/bin/php" ] || continue
+        nn="${d##*/php}"; br="${nn:0:1}.${nn:1:1}"
+        valid_major "$br" || continue
+        if [ -n "$want" ]; then
+            case ",${want}," in *",${br},"*) ;; *) continue ;; esac
+        fi
+        # The directory name says which branch CWP serves from it; the binary must agree.
+        ver="$("${d}/usr/bin/php" -r 'echo PHP_VERSION;' 2>/dev/null | tail -1)"
+        if [ "${ver%.*}" != "$br" ]; then
+            SELECTOR_RESULTS+=("fail:${d} holds PHP '${ver:-?}', not ${br}.x — left alone")
+            failed=1; continue
+        fi
+        done_list="${done_list}${br},"
+        # The whole build lives under its prefix: back it up as one tree.
+        if upgrade_suphp_build "selector ${br}" "${d}/usr/bin" "${d}/usr" "" "$d"; then
+            SELECTOR_RESULTS+=("ok:${SU_RESULT}")
+        else
+            SELECTOR_RESULTS+=("fail:selector ${br} upgrade FAILED — the previous build is in place")
+            failed=1
+        fi
+    done
+    if [ -n "$want" ]; then
+        for br in ${want//,/ }; do
+            case "$done_list" in *",${br},"*) ;; *)
+                SELECTOR_RESULTS+=("fail:selector ${br} was requested but /opt/alt/php${br//./} is not a ${br}.x build on this server")
+                failed=1 ;;
+            esac
+        done
+    elif [ "$done_list" = "," ]; then
+        warn "no PHP Selector build of 8.2-8.5 found in /opt/alt/phpNN — nothing to do"
+    fi
+    return $failed
 }

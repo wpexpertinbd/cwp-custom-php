@@ -100,6 +100,13 @@ curl -fsSL https://raw.githubusercontent.com/wpexpertinbd/cwp-custom-php/main/in
 - `--main=8.3.36` pins a version. It never changes the branch (8.3 stays 8.3) and never downgrades. Already current = nothing to do (`BH_MAIN_FORCE=1` rebuilds anyway).
 - On 7.x / 8.0 / 8.1 it does nothing: php.net no longer releases fixes for those branches.
 
+**`--selector[=8.2,8.3]`** does the same for CWP's **PHP Selector** builds in `/opt/alt/phpNN` (not the `/opt/alt/php-fpmNN` FPM builds): a suPHP site picks one with `AddHandler application/x-httpd-phpNN` in its `.htaccess`, so these serve sites too and need the same security releases. Each 8.2–8.5 build present is upgraded within its branch; the whole `/opt/alt/phpNN` tree is backed up first, and the configure prefix must be that build's own (`/opt/alt/phpNN/usr`) or it refuses. Selector builds often already print startup warnings (an old SourceGuardian / mongodb loader), so the check there is "no NEW warnings".
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wpexpertinbd/cwp-custom-php/main/install.sh \
+  | bash -s -- --php 8.2=latest,8.3=latest,8.4=latest,8.5=latest --force-conf --main --selector
+```
+
 ### ⚠️ Advanced flags — only use after reading the warnings
 
 `--clean-shadow-libs` and `--system-php=X.Y` exist for specific repair scenarios but **caused tenant outages on s1 (2026-05-27)** when used as part of the default rollout. They override CWP's behaviour for `/usr/local/bin/php*` and `/usr/local/lib*/`. Don't include them in fleet rollout commands unless you have a specific known problem and have read what they do in the [Options reference](#options-reference) below.
@@ -222,6 +229,7 @@ systemctl status php-fpm84
 |-----------------------|--------------|
 | `--php X.Y[=VER]`     | PHP majors to install/update. Accepts `8.4`, `8.4=8.4.21`, `8.4=latest`, comma-list `8.3,8.4,8.5`. |
 | `--main[=VER]`        | Also upgrade CWP's main (suPHP / CLI) PHP to the newest release of its own branch, or to `VER` in that branch. Backed up first, rolled back automatically on any difference. See [Upgrade CWP's main PHP](#upgrade-cwps-main-php-suphp--cli----main). `--php` becomes optional. |
+| `--selector[=LIST]`   | Also upgrade CWP's PHP Selector builds (`/opt/alt/phpNN`) of 8.2–8.5 within their branch, the same way as `--main`. `LIST` limits it (`--selector=8.2,8.3`). |
 | `--build-only`        | Skip GUI scaffolding deploy. Use for repeat builds. |
 | `--force-conf`        | Overwrite existing `/usr/local/cwp/.conf/php-fpm_conf/php{NN}*.conf` (EL8 only). |
 | `--refresh-ioncube`   | Post-CWP-rebuild recovery (libzip + ioncube + versions.ini merge + restart all custom php-fpm). **Also re-asserts the big-upload limit** (CWP rebuilds reset it to 64 MB) — honors `--big-upload` / `BH_BIG_UPLOAD_MB` (default 2048, `0` to skip). Run after ANY CWP UI rebuild. |
@@ -282,7 +290,7 @@ cwp-custom-php/
 │   ├── deploy-conf.sh                            # /usr/local/cwp/.conf/php-fpm_conf/ seeding (EL8 only)
 │   ├── build-php.sh                              # unified builder with EL-aware profiles
 │   ├── carry-config.sh                           # carries php.ini values + php.d/*.ini across a rebuild
-│   ├── main-php.sh                               # --main: upgrade CWP's main (suPHP/CLI) PHP in /usr/local
+│   ├── main-php.sh                               # --main / --selector: upgrade CWP's suPHP builds (/usr/local, /opt/alt/phpNN)
 │   ├── ioncube.sh                                # refresh loaders + stale-check + auto-heal
 │   └── postcheck.sh                              # verification table
 ├── selector/
@@ -307,6 +315,9 @@ cwp-custom-php/
 **Build seems to hang** — that's normal. `make -j$(nproc)` on PHP source takes 5-15 minutes depending on CPU.
 
 ## Changelog
+
+### 2026-10-22 — `--selector`: upgrade CWP's PHP Selector builds too
+A follow-up audit found a third PHP family the CVE rollout had missed: CWP's PHP Selector CGI builds in `/opt/alt/phpNN`, chosen per site in `.htaccess` (8.2.28–8.2.31 and 8.3.21–8.3.31 across five servers). `--selector` upgrades them with the same routine as `--main` (`lib/main-php.sh` now handles both): the running build's configure options, sha256-checked php.net source, whole-tree backup, verification and automatic rollback, before/after site check.
 
 ### 2026-10-22 — `--main`: upgrade CWP's main (suPHP / CLI) PHP too
 The CVE-2026-109618/109619 rollout patched every PHP-FPM build, but most sites on a CWP box run on the main PHP, which CWP's switcher could only move to CWP's own (unpatched) packages. `--main` rebuilds it from php.net source with the running build's own configure options, keeps `php.ini`/`php.d`/extensions, verifies modules, settings and startup, checks every site before and after, and rolls back on any difference. Used on six production servers (8.3.31 → 8.3.36, 8.2.31 → 8.2.35) with every site answering exactly as before.

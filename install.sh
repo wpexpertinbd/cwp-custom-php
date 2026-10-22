@@ -100,7 +100,8 @@ export REPO_ROOT
 PHP_SPECS=""            # comma list: "8.3" or "8.4=8.4.21"
 MAIN_PHP_HINT=""        # --main[=VER]: also upgrade CWP's main (suPHP/CLI) PHP
 MAIN_PHP_WANTED=0
-MAIN_RESULT=""
+SELECTOR_WANTED=0       # --selector[=8.2,8.3]: also upgrade CWP's PHP Selector builds
+SELECTOR_LIST=""
 BUILD_ONLY=0
 FIX_DNF_ONLY=0
 REFRESH_IONCUBE_ONLY=0
@@ -110,7 +111,7 @@ BIG_UPLOAD_MB="${BH_BIG_UPLOAD_MB:-2048}"   # default 2048 MB; set 0 to skip
 
 usage() {
     cat <<'EOF'
-Usage: install.sh --php <major[=version|=latest]>[,major2[=ver],...] [--main[=VER]] [options]
+Usage: install.sh --php <major[=version|=latest]>[,major2[=ver],...] [--main[=VER]] [--selector[=LIST]] [options]
 
 Required (one or both):
   --php X.Y[=VER]       PHP-FPM majors to install/update. Accepts:
@@ -126,6 +127,10 @@ Required (one or both):
                         build; php.ini/php.d/extensions kept; backed up first
                         and rolled back automatically if anything differs.
                         Never changes the branch, never downgrades.
+  --selector[=LIST]     Also upgrade CWP's PHP Selector builds (/opt/alt/phpNN,
+                        picked per site with AddHandler x-httpd-phpNN) of
+                        8.2-8.5 to the newest release of their branch, the same
+                        way as --main. LIST limits it, e.g. --selector=8.2,8.3.
 
 Options:
   --jobs N              make -j parallelism. Default: (cores - 2), min 1.
@@ -191,7 +196,7 @@ Examples:
   bash install.sh --php 8.4
   bash install.sh --php 8.3=8.3.31,8.4=8.4.21,8.5=latest
   bash install.sh --main                              # main PHP only
-  bash install.sh --php 8.2,8.3,8.4,8.5 --main        # everything
+  bash install.sh --php 8.2,8.3,8.4,8.5 --main --selector   # everything
   bash install.sh --fix-dnf
 EOF
 }
@@ -202,6 +207,8 @@ while [ $# -gt 0 ]; do
         --php=*)      PHP_SPECS="${1#*=}"; shift ;;
         --main)       MAIN_PHP_WANTED=1; shift ;;
         --main=*)     MAIN_PHP_WANTED=1; MAIN_PHP_HINT="${1#*=}"; shift ;;
+        --selector)   SELECTOR_WANTED=1; shift ;;
+        --selector=*) SELECTOR_WANTED=1; SELECTOR_LIST="${1#*=}"; shift ;;
         --build-only) BUILD_ONLY=1; shift ;;
         --force-conf) FORCE_CONF=1; shift ;;
         --fix-dnf)    FIX_DNF_ONLY=1; shift ;;
@@ -323,7 +330,12 @@ if [ "$REFRESH_IONCUBE_ONLY" -eq 1 ]; then
 fi
 
 # Required arg
-[ -n "$PHP_SPECS" ] || [ "$MAIN_PHP_WANTED" -eq 1 ] || { usage; exit 2; }
+[ -n "$PHP_SPECS" ] || [ "$MAIN_PHP_WANTED" -eq 1 ] || [ "$SELECTOR_WANTED" -eq 1 ] || { usage; exit 2; }
+if [ -n "$SELECTOR_LIST" ]; then
+    for br in ${SELECTOR_LIST//,/ }; do
+        valid_major "$br" || { err "--selector: unsupported branch '$br' (allowed: 8.2, 8.3, 8.4, 8.5)"; exit 2; }
+    done
+fi
 # --system-php replaces /usr/local/bin/php* with symlinks to an FPM build, which
 # would throw away the main PHP that --main just upgraded.
 if [ "$MAIN_PHP_WANTED" -eq 1 ] && [ -n "${BH_SYSTEM_PHP:-}" ]; then
@@ -371,6 +383,10 @@ MAIN_FAILED=0
 if [ "$MAIN_PHP_WANTED" -eq 1 ]; then
     upgrade_main_php "$MAIN_PHP_HINT" || MAIN_FAILED=1
 fi
+SELECTOR_FAILED=0
+if [ "$SELECTOR_WANTED" -eq 1 ]; then
+    upgrade_selector_php "$SELECTOR_LIST" || SELECTOR_FAILED=1
+fi
 
 # -----------------------------------------------------------------------------
 # Final report
@@ -409,6 +425,9 @@ if [ "$MAIN_PHP_WANTED" -eq 1 ]; then
     if [ "$MAIN_FAILED" -eq 0 ]; then ok "${MAIN_RESULT:-main PHP: nothing to do}"
     else err "main PHP upgrade FAILED — the previous main PHP is in place; see the messages above"; fi
 fi
+for r in "${SELECTOR_RESULTS[@]}"; do
+    case "$r" in ok:*) ok "${r#ok:}" ;; *) err "${r#fail:}" ;; esac
+done
 
 # The run succeeded: move this run's previous installs (.rollback.<stamp>) out
 # of /opt/alt — leftovers there break CWP's PHP Selector — into the backup dir.
@@ -421,5 +440,5 @@ prune_old_backups
 for d in "${BH_ROLLBACK_KEPT[@]}"; do
     [ -d "$d" ] && ok "Previous install kept at: ${d}  (php.ini / php.d to compare or restore from)"
 done
-[ "$MAIN_FAILED" -eq 0 ] || { err "Finished with errors. Backups: /root/cwp-php-backups/${BH_RUN_STAMP}/"; exit 1; }
+[ "$MAIN_FAILED" -eq 0 ] && [ "$SELECTOR_FAILED" -eq 0 ] || { err "Finished with errors. Backups: /root/cwp-php-backups/${BH_RUN_STAMP}/"; exit 1; }
 ok "All done. Backups: /root/cwp-php-backups/${BH_RUN_STAMP}/"

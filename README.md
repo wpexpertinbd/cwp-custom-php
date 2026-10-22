@@ -1,8 +1,74 @@
 # cwp-custom-php
 
-Custom PHP-FPM **8.3 / 8.4 / 8.5** installer and updater for **CWP (Control Web Panel)** on **EL8 / EL9** (AlmaLinux, Rocky, CloudLinux, CentOS).
+Custom PHP **8.2 / 8.3 / 8.4 / 8.5** installer and updater for **CWP (Control Web Panel)** on **EL8 / EL9** (AlmaLinux, Rocky, CloudLinux, CentOS): PHP-FPM, CWP's main suPHP PHP, and CWP's PHP Selector builds — all from php.net, the day a security release ships.
 
 Replaces the multi-step manual guide (copy selector files, fix mbstring, build curl, run builder per version, patch memcache/redis, install imagick/ioncube, reinstall ioncube after every CWP rebuild, etc.) with a **single command**.
+
+## Copy-paste commands
+
+Run as **root** on the CWP server. Every command is safe to re-run. Each build is backed up first and rolled back automatically if the result is not right; the log goes to `/root/cwp-custom-php-<host>-<time>.log`.
+
+**Patch every PHP on the server** — PHP-FPM 8.2–8.5, the main suPHP PHP and the PHP Selector builds, each to the newest php.net release of its own branch:
+```bash
+curl -fsSL https://raw.githubusercontent.com/wpexpertinbd/cwp-custom-php/main/install.sh | bash -s -- --php 8.2=latest,8.3=latest,8.4=latest,8.5=latest --force-conf --main --selector
+```
+
+**PHP-FPM only** (all four versions):
+```bash
+curl -fsSL https://raw.githubusercontent.com/wpexpertinbd/cwp-custom-php/main/install.sh | bash -s -- --php 8.2=latest,8.3=latest,8.4=latest,8.5=latest --force-conf
+```
+
+**One PHP-FPM version** (here 8.4):
+```bash
+curl -fsSL https://raw.githubusercontent.com/wpexpertinbd/cwp-custom-php/main/install.sh | bash -s -- --php 8.4=latest
+```
+
+**One PHP-FPM version, pinned to an exact release:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/wpexpertinbd/cwp-custom-php/main/install.sh | bash -s -- --php 8.4=8.4.27
+```
+
+**Main suPHP PHP only** (`/usr/local/bin/php` + `php-cgi`, which every site not on PHP-FPM runs on):
+```bash
+curl -fsSL https://raw.githubusercontent.com/wpexpertinbd/cwp-custom-php/main/install.sh | bash -s -- --main
+```
+
+**PHP Selector builds only** (`/opt/alt/phpNN`, chosen per site in `.htaccess`) — all of 8.2–8.5, or just some:
+```bash
+curl -fsSL https://raw.githubusercontent.com/wpexpertinbd/cwp-custom-php/main/install.sh | bash -s -- --selector
+```
+```bash
+curl -fsSL https://raw.githubusercontent.com/wpexpertinbd/cwp-custom-php/main/install.sh | bash -s -- --selector=8.2,8.3
+```
+
+**After ANY CWP panel update or CWP PHP rebuild** — restores ionCube, libzip, the PHP-FPM Selector version list and the upload limits that CWP resets:
+```bash
+curl -fsSL https://raw.githubusercontent.com/wpexpertinbd/cwp-custom-php/main/install.sh | bash -s -- --refresh-ioncube
+```
+
+**Show the newest PHP releases in CWP's PHP-FPM Selector dropdown** (no build, no restart):
+```bash
+curl -fsSL https://raw.githubusercontent.com/wpexpertinbd/cwp-custom-php/main/install.sh | bash -s -- --sync-versions
+```
+
+**`dnf` / `yum` broken after a manual curl install:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/wpexpertinbd/cwp-custom-php/main/install.sh | bash -s -- --fix-dnf
+```
+
+**Busy server? Build more gently** — add `--jobs 2` (fewer compiler processes) to any build command above, e.g.:
+```bash
+curl -fsSL https://raw.githubusercontent.com/wpexpertinbd/cwp-custom-php/main/install.sh | bash -s -- --main --selector --jobs 2
+```
+
+**See which PHP versions the server runs** (read-only, changes nothing):
+```bash
+for p in /usr/local/bin/php /opt/alt/php-fpm[0-9][0-9]/usr/bin/php /opt/alt/php[0-9][0-9]/usr/bin/php; do [ -x "$p" ] && printf '%-40s %s\n' "$p" "$("$p" -r 'echo PHP_VERSION;' 2>/dev/null | tail -1)"; done
+```
+
+**Undo a main / Selector upgrade** — the run prints the exact command in its summary (`rollback: tar -xzf … -C /`); the backups are in `/root/cwp-php-backups/<time>/`.
+
+> ⚠️ After this, do **not** rebuild or switch PHP from CWP's own panel (PHP Version Switcher / PHP Selector / PHP-FPM Selector "rebuild"): it installs CWP's older packaged PHP over the patched one. Re-run the command above instead.
 
 ## What `install.sh` does
 

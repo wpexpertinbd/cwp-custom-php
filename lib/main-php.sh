@@ -184,8 +184,25 @@ upgrade_suphp_build() {
     su_php_fetch_source "$target" "$src" || return 1
 
     local nicep jobs; nicep="$(build_nice_prefix)"; jobs="$(build_jobs)"
+    # A bare --with-pgsql / --with-pdo-pgsql only looks in fixed places
+    # (/usr/local/pgsql, /usr/bin/pg_config, ...), so a PGDG PostgreSQL in
+    # /usr/pgsql-N is not found. When the running build links that libpq, point
+    # both options at the same install: the new build links the same library.
+    local pgbase="" pqlib i
+    pqlib="$(ldd "$SU_PHP" 2>/dev/null | awk '$1 ~ /^libpq\.so/ && $2 == "=>" {print $3; exit}')"
+    case "$pqlib" in
+        /usr/pgsql-*/lib/*) [ -x "${pqlib%/lib/*}/bin/pg_config" ] && pgbase="${pqlib%/lib/*}" ;;
+    esac
+    if [ -n "$pgbase" ]; then
+        for i in "${!cfg[@]}"; do
+            case "${cfg[$i]}" in --with-pgsql|--with-pdo-pgsql) cfg[$i]="${cfg[$i]}=${pgbase}" ;; esac
+        done
+        log "PostgreSQL: the running build links ${pqlib}; building against ${pgbase}"
+    fi
     log "configure with the running build's options (log: ${src}/configure.log)"
-    ( cd "${src}/php-${target}" && $nicep ./configure "${cfg[@]}" ) > "${src}/configure.log" 2>&1 \
+    ( cd "${src}/php-${target}" && PATH="${pgbase:+${pgbase}/bin:}${PATH}" \
+        PKG_CONFIG_PATH="${pgbase:+${pgbase}/lib/pkgconfig:}${PKG_CONFIG_PATH:-}" \
+        $nicep ./configure "${cfg[@]}" ) > "${src}/configure.log" 2>&1 \
         || { err "${label}: configure failed — tail ${src}/configure.log"; return 1; }
     log "make -j${jobs} (log: ${src}/make.log)"
     ( cd "${src}/php-${target}" && $nicep make -j"$jobs" ) > "${src}/make.log" 2>&1 \
